@@ -2,18 +2,18 @@
 
 A phone web app for Tribe HQ coaching. The coach builds programs, clients log their sessions, and clients drop technique videos into a queue that the coach reviews on Tuesdays and Thursdays.
 
-- **Coach:** review queue (batched by review day), program builder in Tribe notation, client roster with approvals.
-- **Client:** this week's sessions with set-by-set logging (reps, kg, RPE), video upload, feedback history.
+- **Coach:** review queue (batched by review day), a breakdown tool for each video (slow motion, frame stepping, drawing lines, circles and joint angles, recorded with your voice), program builder in Tribe notation, client roster with approvals.
+- **Client:** this week's sessions with set-by-set logging (reps, kg, RPE), video upload, feedback history including the coach's breakdown videos.
 - **Review days:** a video joins the batch for the day it's uploaded if that's a Tuesday or Thursday, otherwise the next one. See `src/schedule.js`.
 
-Built with plain JavaScript and Vite. Supabase handles sign-in (email links, no passwords), the database and video storage.
+Built with plain JavaScript and Vite. Supabase handles sign-in (email and password), the database and video storage.
 
 ## Set up
 
 ### 1. Supabase
 
 1. Create a project at [supabase.com](https://supabase.com). Pick the Sydney region.
-2. Open **SQL Editor**, paste in `supabase/migrations/0001_init.sql` and run it. This creates the tables, the access rules and the private `videos` storage bucket (50 MB per file).
+2. Open **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql`, then `0002_breakdowns.sql`). This creates the tables, the access rules and the private `videos` storage bucket (50 MB per file).
 3. Go to **Authentication > URL Configuration**. Set **Site URL** to wherever the app is hosted (step 3 below) and add the same address under **Redirect URLs**.
 4. Copy the **Project URL** and the **anon public** key from **Project Settings > API**. Never put the `service_role` key in this app.
 
@@ -33,7 +33,7 @@ On Cloudflare (Workers & Pages > Create > import the repo): build command `npm r
 
 ### 4. First sign-in
 
-**The first account to sign in becomes the coach.** Sign in yourself before sending the link to anyone. After that, every sign-up is a client who waits in **Clients > Waiting for approval** until you approve them.
+**The first account created becomes the coach.** Create yours before sending the link to anyone. New accounts get one email to confirm the address (Supabase's "Confirm email" setting); after that it's email and password. **Forgot password?** on the sign-in screen sends a reset link, and **Change password** at the bottom of the app sets a new one. After that, every sign-up is a client who waits in **Clients > Waiting for approval** until you approve them.
 
 To make a different account the coach later, run this in the SQL Editor:
 
@@ -49,14 +49,18 @@ Access is enforced in the database (row level security), not just hidden in the 
 |---|---|---|---|
 | Programs | all, edit | only their assigned one | none |
 | Session logs | read all | read and write their own | none |
-| Videos | all, review, delete | upload and read their own | none |
+| Videos | all, review, record breakdowns, delete | upload and read their own, watch their breakdowns | none |
 | Profiles | all, approve, assign | own name and goal | own |
 
-Clients can't mark their own videos as reviewed, change their program, or approve themselves. `supabase/tests/` has a script that checks these rules against a plain Postgres database.
+Clients can't mark their own videos as reviewed, change their program, or approve themselves. `supabase/tests/` has scripts that check these rules against a plain Postgres database.
+
+## Breakdowns
+
+On a review card, **Break it down** opens the clip full size. Tap **Record breakdown**, then play, slow down (½x, ¼x), step frame by frame, scrub and draw while you talk. The screen and your voice are saved as one video (up to 3 minutes) in the client's folder, and they watch it under their feedback. It needs a recent Safari or Chrome and microphone access.
 
 ## Storage
 
-Video files are the only thing that grows. The coach view has a **Clear video files reviewed 30+ days ago** button. It deletes the files and keeps the feedback.
+Video files are the only thing that grows. The coach view has a **Clear video files reviewed 30+ days ago** button. It deletes the client videos and breakdown recordings and keeps the written feedback.
 
 ## Tests
 
