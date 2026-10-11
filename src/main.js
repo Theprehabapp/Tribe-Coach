@@ -12,7 +12,7 @@ const app = document.getElementById("app");
 const tabsEl = document.getElementById("tabs");
 
 // All data the signed-in person may see, loaded once and kept in sync as they act.
-let D = { profiles: [], programs: [], logs: [], videos: [] };
+let D = { profiles: [], programs: [], logs: [], videos: [], settings: { review_days: false } };
 let me = null; // signed-in profile
 let ui = { tab: null, view: null, programId: null, week: 0, clientId: null, logKey: null, drafts: {}, file: null, busy: false };
 
@@ -25,6 +25,8 @@ const clients = () => D.profiles.filter((p) => p.role === "client");
 const today = () => ymd(new Date());
 const findLog = (cid, pid, w, dayId) => D.logs.find((l) => l.client_id === cid && l.program_id === pid && l.week === w && l.day_id === dayId);
 const waiting = () => D.videos.filter((v) => v.status === "waiting");
+const reviewDays = () => !!D.settings?.review_days; // false: review any time; true: batch for Tue/Thu
+const slotNow = () => (reviewDays() ? slotFor(new Date()) : today());
 const newId = () => crypto.randomUUID().slice(0, 8);
 
 let bd = null; // the open breakdown tool, if any
@@ -166,6 +168,30 @@ function weekStrip() {
 
 /* ----- coach: review queue ----- */
 function vQueue() {
+  return (reviewDays() ? vQueueDays() : vQueueAnytime()) + reviewedList() + scheduleSwitch();
+}
+function vQueueAnytime() {
+  const list = waiting();
+  let out = `<section class="hero"><div class="kicker">Video review</div>
+    <div class="hero-grid"><div class="big num">${list.length}</div><h1>${list.length ? `video${list.length === 1 ? "" : "s"} to review` : "All caught up"}</h1></div>
+    <p class="muted small">Clients upload whenever they like and you get an email for each new video. Review them whenever suits you.</p></section>`;
+  if (list.length) out += batch("Waiting", list);
+  else out += '<div class="empty">No videos waiting. You\'ll get an email when a client sends one.</div>';
+  return out;
+}
+function scheduleSwitch() {
+  return `<section class="stack"><div class="section-head"><h2>Review schedule</h2></div>
+    <div class="seg" role="group" aria-label="Review schedule">
+      <button data-act="review-mode" data-v="anytime" aria-pressed="${!reviewDays()}">Any time</button>
+      <button data-act="review-mode" data-v="days" aria-pressed="${reviewDays()}">Tuesdays &amp; Thursdays</button></div>
+    <p class="muted small">${reviewDays() ? "Videos are batched for the next Tuesday or Thursday, and clients see which day they'll hear back." : "Clients are told you'll review their video as soon as you can. Switch to Tuesdays & Thursdays if it gets busy."}</p></section>`;
+}
+function reviewedList() {
+  const done = D.videos.filter((v) => v.status === "reviewed").sort((a, b) => (b.reviewed_at || "").localeCompare(a.reviewed_at || ""));
+  return done.length ? `<details class="stack"><summary>Reviewed (${done.length})</summary><div class="list" style="margin-top:10px">${done.slice(0, 30).map((v) =>
+    `<div class="item static"><div class="row spread"><strong>${esc(profile(v.client_id)?.name || "Client")} - ${esc(v.exercise)}</strong><span class="row">${v.review_path ? '<span class="chip">Breakdown</span>' : ""}${verdictChip(v.verdict)}</span></div><p class="small muted">${esc(v.feedback)}</p></div>`).join("")}</div></details>` : "";
+}
+function vQueueDays() {
   const t = today(), isReviewDay = REVIEW_DAYS.includes(new Date().getDay());
   const due = waiting().filter((v) => v.slot <= t);
   const upcoming = waiting().filter((v) => v.slot > t);
@@ -187,10 +213,6 @@ function vQueue() {
       ${groupSummary(upcoming)}<div><button class="btn" data-act="open-early">Review this batch early</button></div></section>`;
   }
   if (!waiting().length) out += '<div class="empty">No videos waiting. When a client uploads one it shows up here for the next review day.</div>';
-
-  const done = D.videos.filter((v) => v.status === "reviewed").sort((a, b) => (b.reviewed_at || "").localeCompare(a.reviewed_at || ""));
-  if (done.length) out += `<details class="stack"><summary>Reviewed (${done.length})</summary><div class="list" style="margin-top:10px">${done.slice(0, 30).map((v) =>
-    `<div class="item static"><div class="row spread"><strong>${esc(profile(v.client_id)?.name || "Client")} - ${esc(v.exercise)}</strong><span class="row">${v.review_path ? '<span class="chip">Breakdown</span>' : ""}${verdictChip(v.verdict)}</span></div><p class="small muted">${esc(v.feedback)}</p></div>`).join("")}</div></details>`;
   return out;
 }
 function byClient(list) {
@@ -232,7 +254,7 @@ function hydrateVideos() {
 }
 function reviewCard(v) {
   const d = ui.drafts[v.id] || { verdict: "", feedback: "" };
-  const late = v.slot < today();
+  const late = reviewDays() && v.slot < today();
   return `<article class="card qcard">${videoBox(v)}<div class="stack">
     <div class="row spread"><strong>${esc(v.exercise)}</strong>${late ? `<span class="chip red">From ${fmtDay(v.slot)}</span>` : ""}</div>
     <p class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</p>
@@ -362,7 +384,7 @@ function vClientDetail() {
   out += `<section class="stack"><div class="section-head"><h2>Logged sessions</h2><span class="muted small num">${logs.length}</span></div>${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Nothing logged yet.</div>'}</section>`;
   const vids = D.videos.filter((v) => v.client_id === c.id);
   out += `<section class="stack"><div class="section-head"><h2>Videos</h2></div>${vids.length ? '<div class="list">' + vids.map((v) =>
-    `<div class="item static"><div class="row spread"><strong>${esc(v.exercise)}</strong>${v.status === "waiting" ? `<span class="chip">For ${fmtDay(v.slot)}</span>` : verdictChip(v.verdict)}</div><p class="small muted">${fmtTime(v.uploaded_at)}</p></div>`).join("") + "</div>" : '<div class="empty">No videos yet.</div>'}</section>`;
+    `<div class="item static"><div class="row spread"><strong>${esc(v.exercise)}</strong>${v.status === "waiting" ? `<span class="chip">${reviewDays() ? `For ${fmtDay(v.slot)}` : "Waiting"}</span>` : verdictChip(v.verdict)}</div><p class="small muted">${fmtTime(v.uploaded_at)}</p></div>`).join("") + "</div>" : '<div class="empty">No videos yet.</div>'}</section>`;
   out += `<div class="row">${ui.confirmRevoke === c.id
     ? `<span>Remove ${esc(c.name || c.email)}'s access? Their history stays and you can approve them again later.</span><button class="btn small primary" data-act="revoke-yes">Remove access</button><button class="btn small" data-act="revoke-no">Cancel</button>`
     : '<button class="btn small danger" data-act="revoke">Remove access</button>'}</div>`;
@@ -444,11 +466,11 @@ function vLog() {
 
 /* ----- client: videos ----- */
 function vClientVideos() {
-  const slot = slotFor(new Date()), p = program(me.program_id);
+  const slot = slotNow(), p = program(me.program_id);
   const names = [...new Set((p?.weeks || []).flatMap((w) => w.days.flatMap((d) => d.exercises.map((e) => e.name))).filter(Boolean))];
   let out = `<section class="hero"><div class="kicker">Technique videos</div><h1>Drop it here, not in my DMs</h1>
-    <p class="muted">I review videos every Tuesday and Thursday. Upload whenever suits you and you'll get feedback here on the next review day.</p>
-    <div class="feedback"><span class="small">Anything you upload now goes into <strong>${fmtLong(slot)}'s</strong> review.</span></div></section>
+    ${reviewDays() ? `<p class="muted">I review videos every Tuesday and Thursday. Upload whenever suits you and you'll get feedback here on the next review day.</p>
+    <div class="feedback"><span class="small">Anything you upload now goes into <strong>${fmtLong(slot)}'s</strong> review.</span></div>` : '<p class="muted">Upload whenever suits you. I review videos as they come in, and your feedback shows up right here.</p>'}</section>
     <section class="card"><label class="drop" id="drop" for="vfile"><strong>${ui.file ? esc(ui.file.name) : "Choose a video"}</strong>
       <span class="muted small">${ui.file ? `${(ui.file.size / 1048576).toFixed(1)} MB, tap to swap` : `Or drag one in. Side-on, whole body in frame. Up to ${api.MAX_VIDEO_MB} MB, so trim it to the set.`}</span></label>
       <input id="vfile" type="file" accept="video/*" hidden>
@@ -458,7 +480,7 @@ function vClientVideos() {
       <div class="row"><button class="btn primary" data-act="upload"${ui.file && !ui.busy ? "" : " disabled"}>${ui.busy ? "Uploading..." : "Send to review queue"}</button></div></section>`;
   const mine = D.videos.filter((v) => v.client_id === me.id);
   out += `<section class="stack"><div class="section-head"><h2>Your videos</h2></div>${mine.length ? mine.map((v) =>
-    `<article class="card qcard">${videoBox(v)}<div class="stack"><div class="row spread"><strong>${esc(v.exercise)}</strong>${v.status === "waiting" ? `<span class="chip">In ${fmtDay(v.slot)} review</span>` : verdictChip(v.verdict)}</div>
+    `<article class="card qcard">${videoBox(v)}<div class="stack"><div class="row spread"><strong>${esc(v.exercise)}</strong>${v.status === "waiting" ? `<span class="chip">${reviewDays() ? `In ${fmtDay(v.slot)} review` : "Waiting for review"}</span>` : verdictChip(v.verdict)}</div>
       <p class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</p>${v.note ? `<p class="small">"${esc(v.note)}"</p>` : ""}
       ${v.status === "reviewed" ? `<div class="feedback"><span class="kicker">Coach feedback</span>${v.review_path ? `<p class="small">Watch your breakdown, sound on.</p><div class="vid wide" data-video="${esc(v.review_path)}">Loading breakdown</div>` : ""}${v.feedback || !v.review_path ? `<p class="small">${esc(v.feedback || "No notes.")}</p>` : ""}</div>` : ""}</div></article>`).join("") : '<div class="empty">No videos yet. Film a working set and drop it above.</div>'}</section>`;
   return out;
@@ -524,6 +546,13 @@ document.addEventListener("click", async (ev) => {
       if (act === "tab") { go(() => { ui.tab = v; ui.view = null; }); scrollTo(0, 0); break; }
       go(() => { ui.view = null; ui.confirmRevoke = null; ui.confirmDelProgram = false; }); break;
     case "open-early": go(() => (ui.earlyOpen = true)); break;
+    case "review-mode": {
+      const on = v === "days";
+      if (on === reviewDays()) break;
+      try { D.settings = await api.saveSettings({ review_days: on }); render(); toast(on ? "Videos now wait for Tuesdays and Thursdays." : "Review any time is on. You'll get an email for each new video."); }
+      catch (err) { fail(err, "Review schedule"); }
+      break;
+    }
     case "breakdown": go(() => { ui.bdId = id; ui.view = "breakdown"; }); scrollTo(0, 0); break;
     case "verdict": go(() => { ui.drafts[id] = { ...(ui.drafts[id] || { feedback: "" }), verdict: v }; }); break;
     case "send-feedback": {
@@ -646,10 +675,10 @@ async function doUpload() {
   if (!exercise) { toast("Type which exercise this is first."); document.getElementById("v-ex")?.focus(); return; }
   ui.busy = true; render();
   try {
-    const row = await api.uploadVideo(me.id, ui.file, { exercise, note, slot: slotFor(new Date()) });
+    const row = await api.uploadVideo(me.id, ui.file, { exercise, note, slot: slotNow() });
     D.videos.unshift(row);
     ui.file = null; ui.vnote = ""; ui.filmEx = null;
-    toast(`Sent. It's in ${fmtLong(row.slot)}'s review.`);
+    toast(reviewDays() ? `Sent. It's in ${fmtLong(row.slot)}'s review.` : "Sent. Your feedback will show up here once it's reviewed.");
   } catch (e) { fail(e, "Your video"); }
   ui.busy = false; render();
 }
