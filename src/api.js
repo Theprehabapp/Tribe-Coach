@@ -16,9 +16,14 @@ function check({ data, error }) {
 
 /* ---------- auth ---------- */
 export const getSession = async () => (await sb.auth.getSession()).data.session;
-export const onAuth = (fn) => sb.auth.onAuthStateChange((_e, session) => fn(session));
-export const sendLink = (email, name) =>
-  sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname, data: name ? { name } : undefined } }).then(check);
+export const onAuth = (fn) => sb.auth.onAuthStateChange((event, session) => fn(session, event));
+const home = () => location.origin + location.pathname;
+export const signIn = (email, password) => sb.auth.signInWithPassword({ email, password }).then(check);
+// Returns { session } straight away when Supabase doesn't require email confirmation, otherwise { session: null }.
+export const signUp = (email, password, name) =>
+  sb.auth.signUp({ email, password, options: { emailRedirectTo: home(), data: name ? { name } : undefined } }).then(check);
+export const sendReset = (email) => sb.auth.resetPasswordForEmail(email, { redirectTo: home() }).then(check);
+export const setPassword = (password) => sb.auth.updateUser({ password }).then(check);
 export const signOut = () => sb.auth.signOut();
 
 /* ---------- loading ---------- */
@@ -66,6 +71,26 @@ export async function uploadVideo(uid, file, meta) {
   }
 }
 
+// Coach's breakdown recording, stored in the client's folder so the client can play it back.
+export async function uploadBreakdown(video, blob) {
+  const type = (blob.type || "video/mp4").split(";")[0];
+  const path = `${video.client_id}/review-${crypto.randomUUID()}.${type === "video/webm" ? "webm" : "mp4"}`;
+  check(await sb.storage.from(BUCKET).upload(path, blob, { contentType: type, upsert: false }));
+  try {
+    const row = check(await sb.from("videos").update({ review_path: path }).eq("id", video.id).select().single());
+    if (video.review_path) await sb.storage.from(BUCKET).remove([video.review_path]); // replaced an earlier take
+    return row;
+  } catch (e) {
+    await sb.storage.from(BUCKET).remove([path]);
+    throw e;
+  }
+}
+
+// The breakdown tool draws video frames onto a canvas, so it needs a same-origin copy of the file.
+export async function videoBlobUrl(path) {
+  return URL.createObjectURL(check(await sb.storage.from(BUCKET).download(path)));
+}
+
 const urlCache = new Map();
 export async function videoUrl(path) {
   const hit = urlCache.get(path);
@@ -78,12 +103,12 @@ export async function videoUrl(path) {
 export const reviewVideo = (id, verdict, feedback) =>
   sb.from("videos").update({ verdict, feedback, status: "reviewed", reviewed_at: new Date().toISOString() }).eq("id", id).select().single().then(check);
 
-// Free storage space: delete files for videos reviewed more than `days` ago. The feedback stays.
+// Free storage space: delete files (client video and breakdown) for videos reviewed more than `days` ago. Written feedback stays.
 export async function cleanupVideos(videos, days = 30) {
   const cutoff = Date.now() - days * 864e5;
-  const old = videos.filter((v) => v.status === "reviewed" && v.storage_path && new Date(v.reviewed_at).getTime() < cutoff);
+  const old = videos.filter((v) => v.status === "reviewed" && (v.storage_path || v.review_path) && new Date(v.reviewed_at).getTime() < cutoff);
   if (!old.length) return 0;
-  check(await sb.storage.from(BUCKET).remove(old.map((v) => v.storage_path)));
-  check(await sb.from("videos").update({ storage_path: null }).in("id", old.map((v) => v.id)));
+  check(await sb.storage.from(BUCKET).remove(old.flatMap((v) => [v.storage_path, v.review_path].filter(Boolean))));
+  check(await sb.from("videos").update({ storage_path: null, review_path: null }).in("id", old.map((v) => v.id)));
   return old.length;
 }

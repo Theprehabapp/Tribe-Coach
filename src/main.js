@@ -1,6 +1,7 @@
 import "./styles.css";
 import * as api from "./api.js";
 import { exampleProgram } from "./example.js";
+import { mountBreakdown } from "./breakdown.js";
 import {
   REVIEW_DAYS, DOW, DOW_LONG, W1_LINE, ymd, addDays, fmtDay, fmtLong, fmtTime,
   slotFor, weekOf, sessionDate, rxLine, bumpTarget,
@@ -26,6 +27,8 @@ const findLog = (cid, pid, w, dayId) => D.logs.find((l) => l.client_id === cid &
 const waiting = () => D.videos.filter((v) => v.status === "waiting");
 const newId = () => crypto.randomUUID().slice(0, 8);
 
+let bd = null; // the open breakdown tool, if any
+
 let toastT;
 function toast(msg) {
   const t = document.getElementById("toast");
@@ -40,16 +43,21 @@ function debounce(key, fn, ms = 700) { clearTimeout(timers[key]); timers[key] = 
 /* ---------- boot ---------- */
 async function boot() {
   if (!api.configured) return renderShell(vNotConfigured());
-  api.onAuth((session) => start(session));
+  api.onAuth((session, event) => {
+    // Arrived from a "reset password" email: ask for the new password before anything else.
+    if (event === "PASSWORD_RECOVERY") { ui.recovery = true; return renderShell(vSetPassword(true)); }
+    start(session);
+  });
   start(await api.getSession());
 }
 
 let started = null;
 async function start(session) {
   const uid = session?.user?.id || null;
-  if (started === uid && me) return;
+  if (ui.recovery || (started === uid && me)) return;
   started = uid;
   if (!uid) { me = null; return renderShell(vSignIn()); }
+  ui.authMode = "in";
   renderShell('<div class="empty">Loading</div>');
   try {
     me = await api.myProfile(uid);
@@ -76,13 +84,33 @@ function vNotConfigured() {
     <p class="muted">Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to the environment, then rebuild. See the README.</p></section>`;
 }
 function vSignIn() {
-  return `<section class="hero"><div class="kicker">Tribe Coach</div><h1>Sign in</h1>
-    <p class="muted">Enter your email and we'll send you a sign-in link. No password needed.</p></section>
-    <form class="card" id="signin">
-      <label class="f">Email<input class="t" id="si-email" type="email" autocomplete="email" required></label>
-      <label class="f">Your name (first time only)<input class="t" id="si-name" autocomplete="name"></label>
-      <div class="row"><button class="btn primary" type="submit">Send me a link</button></div>
-      <p class="small muted" id="si-msg"></p>
+  const m = ui.authMode || "in";
+  const title = { in: "Sign in", up: "Create your account", forgot: "Reset your password" }[m];
+  const lead = {
+    in: "Use the email and password you signed up with.",
+    up: "New here? Set up your login. Your coach approves new accounts before you can see your program.",
+    forgot: "Enter your email and we'll send you a link to choose a new password.",
+  }[m];
+  return `<section class="hero"><div class="kicker">Tribe Coach</div><h1>${title}</h1><p class="muted">${lead}</p></section>
+    <form class="card" id="signin" data-mode="${m}">
+      ${m === "up" ? '<label class="f">Your name<input class="t" id="si-name" autocomplete="name" required></label>' : ""}
+      <label class="f">Email<input class="t" id="si-email" type="email" autocomplete="email" value="${esc(ui.authEmail || "")}" required></label>
+      ${m === "forgot" ? "" : `<label class="f">Password<input class="t" id="si-pass" type="password" minlength="8" autocomplete="${m === "up" ? "new-password" : "current-password"}" required></label>`}
+      ${m === "up" ? '<p class="small muted">At least 8 characters.</p>' : ""}
+      <div class="row"><button class="btn primary" type="submit">${{ in: "Sign in", up: "Create account", forgot: "Send reset link" }[m]}</button></div>
+      <p class="small" id="si-msg" role="status"></p>
+    </form>
+    <div class="row auth-links">
+      ${m !== "in" ? '<button class="link" data-act="auth-mode" data-v="in">I already have an account</button>' : '<button class="link" data-act="auth-mode" data-v="up">Create an account</button><button class="link" data-act="auth-mode" data-v="forgot">Forgot password?</button>'}
+    </div>`;
+}
+function vSetPassword(recovery) {
+  return `<section class="hero"><div class="kicker">${recovery ? "Reset password" : "Account"}</div><h1>${recovery ? "Choose a new password" : "Change password"}</h1>
+    <p class="muted">At least 8 characters. You'll use it with ${esc(me?.email || "your email")} to sign in.</p></section>
+    <form class="card" id="setpass">
+      <label class="f">New password<input class="t" id="sp-pass" type="password" minlength="8" autocomplete="new-password" required></label>
+      <div class="row"><button class="btn primary" type="submit">Save password</button>${recovery ? "" : '<button class="btn ghost" type="button" data-act="back">Cancel</button>'}</div>
+      <p class="small" id="sp-msg" role="status"></p>
     </form>`;
 }
 function vPending(noProfile) {
@@ -100,14 +128,20 @@ function render() {
   tabsEl.innerHTML = tabs.map(([k, label, n]) =>
     `<button data-act="tab" data-v="${k}"${ui.tab === k && !ui.view ? ' aria-current="page"' : ""}><span class="dot"></span>${label}${n ? ` <span class="count num">${n}</span>` : ""}</button>`).join("");
 
+  if (bd && ui.view !== "breakdown") { bd.destroy(); bd = null; }
+  if (bd) return; // the breakdown tool manages its own screen
+
   let html;
   if (ui.view === "program") html = vProgramEdit();
   else if (ui.view === "client") html = vClientDetail();
   else if (ui.view === "log") html = vLog();
+  else if (ui.view === "password") html = vSetPassword(false);
+  else if (ui.view === "breakdown") html = vBreakdown();
   else if (isCoach()) html = ui.tab === "queue" ? vQueue() : ui.tab === "programs" ? vPrograms() : vClients();
   else html = ui.tab === "today" ? vToday() : ui.tab === "videos" ? vClientVideos() : vHistory();
   app.innerHTML = html + footer();
   hydrateVideos();
+  if (ui.view === "breakdown") openBreakdown();
 }
 
 function lockup() {
@@ -115,7 +149,7 @@ function lockup() {
 }
 function footer() {
   return lockup() + `<div class="row" style="justify-content:center">
-    <span class="small muted">${esc(me.email || "")}</span><button class="btn small ghost" data-act="signout">Sign out</button>
+    <span class="small muted">${esc(me.email || "")}</span><button class="btn small ghost" data-act="password">Change password</button><button class="btn small ghost" data-act="signout">Sign out</button>
     ${isCoach() ? '<button class="btn small ghost" data-act="cleanup">Clear video files reviewed 30+ days ago</button>' : ""}</div>`;
 }
 
@@ -156,7 +190,7 @@ function vQueue() {
 
   const done = D.videos.filter((v) => v.status === "reviewed").sort((a, b) => (b.reviewed_at || "").localeCompare(a.reviewed_at || ""));
   if (done.length) out += `<details class="stack"><summary>Reviewed (${done.length})</summary><div class="list" style="margin-top:10px">${done.slice(0, 30).map((v) =>
-    `<div class="item static"><div class="row spread"><strong>${esc(profile(v.client_id)?.name || "Client")} - ${esc(v.exercise)}</strong>${verdictChip(v.verdict)}</div><p class="small muted">${esc(v.feedback)}</p></div>`).join("")}</div></details>`;
+    `<div class="item static"><div class="row spread"><strong>${esc(profile(v.client_id)?.name || "Client")} - ${esc(v.exercise)}</strong><span class="row">${v.review_path ? '<span class="chip">Breakdown</span>' : ""}${verdictChip(v.verdict)}</span></div><p class="small muted">${esc(v.feedback)}</p></div>`).join("")}</div></details>`;
   return out;
 }
 function byClient(list) {
@@ -170,7 +204,7 @@ function groupSummary(list) {
 }
 function batch(label, list) {
   const by = byClient(list);
-  let out = `<section class="stack"><div class="section-head"><h2>${esc(label)}</h2><span class="chip gold num">${list.length} to review</span></div>`;
+  let out = `<section class="stack"><div class="section-head"><h2>${esc(label)}</h2><span class="chip accent num">${list.length} to review</span></div>`;
   for (const cid of Object.keys(by)) {
     const c = profile(cid) || { name: "Client" }, p = program(c.program_id), w = weekOf(c.start_date, new Date());
     out += `<div class="stack"><div class="row spread"><h3>${esc(c.name || c.email)}</h3><span class="muted small">${p ? esc(p.name) + (w >= 0 ? `, week ${w + 1}` : "") : "No program"}</span></div>`;
@@ -203,13 +237,44 @@ function reviewCard(v) {
     <div class="row spread"><strong>${esc(v.exercise)}</strong>${late ? `<span class="chip red">From ${fmtDay(v.slot)}</span>` : ""}</div>
     <p class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</p>
     ${v.note ? `<p class="small">"${esc(v.note)}"</p>` : '<p class="small muted">No note from the client.</p>'}
+    ${v.storage_path ? `<div class="row"><button class="btn" data-act="breakdown" data-id="${v.id}">${v.review_path ? "Redo breakdown" : "Break it down"}</button>${v.review_path ? '<span class="chip green">Breakdown saved</span>' : '<span class="small muted">Slow-mo, draw and talk over it.</span>'}</div>` : ""}
     <div class="verdicts" role="group" aria-label="Verdict">${[["good", "Good to go"], ["tweak", "Small fix"], ["refilm", "Re-film it"]].map(([k, l]) =>
       `<button data-act="verdict" data-id="${v.id}" data-v="${k}" aria-pressed="${d.verdict === k}">${l}</button>`).join("")}</div>
     <label class="f">Feedback<textarea class="t" id="fb-${v.id}" data-input="feedback" data-id="${v.id}" placeholder="What you saw and what to change next set.">${esc(d.feedback)}</textarea></label>
     <div class="row"><button class="btn primary" data-act="send-feedback" data-id="${v.id}"${d.verdict ? "" : " disabled"}>Send feedback</button>${d.verdict ? "" : '<span class="muted small">Pick a verdict first.</span>'}</div>
   </div></article>`;
 }
-const verdictChip = (v) => ({ good: '<span class="chip green">Good to go</span>', tweak: '<span class="chip gold">Small fix</span>', refilm: '<span class="chip red">Re-film it</span>' })[v] || "";
+const verdictChip = (v) => ({ good: '<span class="chip green">Good to go</span>', tweak: '<span class="chip accent">Small fix</span>', refilm: '<span class="chip red">Re-film it</span>' })[v] || "";
+
+/* ----- coach: breakdown tool ----- */
+function vBreakdown() {
+  const v = D.videos.find((x) => x.id === ui.bdId), c = v && profile(v.client_id);
+  if (!v?.storage_path) { ui.view = null; return vQueue(); }
+  return `<div class="row"><button class="link" data-act="back">Back to review</button></div>
+    <section class="hero"><div class="kicker">Breakdown</div><h1>${esc(c?.name || "Client")}: ${esc(v.exercise)}</h1>
+    ${v.note ? `<p class="small">"${esc(v.note)}"</p>` : ""}
+    <p class="muted small">Tap Record, then play, slow down, pause and draw while you talk. Everything on screen and your voice go into one video for ${esc(c?.name || "your client")}.</p></section>
+    <div id="bd-root" class="bd"><div class="empty">Loading video</div></div>`;
+}
+async function openBreakdown() {
+  const v = D.videos.find((x) => x.id === ui.bdId), root = document.getElementById("bd-root");
+  if (!v || !root) return;
+  try {
+    const src = await api.videoBlobUrl(v.storage_path);
+    if (ui.view !== "breakdown" || ui.bdId !== v.id || !root.isConnected) return URL.revokeObjectURL(src);
+    bd = mountBreakdown(root, {
+      src,
+      maxBytes: api.MAX_VIDEO_MB * 1048576,
+      onSave: async (blob) => {
+        const row = await api.uploadBreakdown(v, blob);
+        D.videos = D.videos.map((x) => (x.id === row.id ? row : x));
+      },
+      onClose: () => { go(() => (ui.view = null)); toast("Breakdown saved. Add a verdict and send it."); },
+    });
+  } catch (e) {
+    root.innerHTML = `<div class="empty">Couldn't open the video: ${esc(e.message || e)}</div>`;
+  }
+}
 
 /* ----- coach: programs ----- */
 function vPrograms() {
@@ -269,7 +334,7 @@ function saveProgramSoon() {
 function vClients() {
   const pending = clients().filter((c) => !c.approved);
   let out = `<section class="hero"><div class="kicker">Roster</div><h1>Clients</h1>
-    <p class="muted small">To add a client, send them this app's link. They sign in with their email and appear below for you to approve.</p></section>`;
+    <p class="muted small">To add a client, send them this app's link. They create an account with their email and a password, then appear below for you to approve.</p></section>`;
   if (pending.length) out += `<section class="stack"><div class="section-head"><h2>Waiting for approval</h2></div><div class="list">${pending.map((c) =>
     `<div class="item static"><div class="row spread"><div><strong>${esc(c.name || "No name")}</strong><p class="small muted">${esc(c.email)}</p></div><button class="btn small primary" data-act="approve" data-id="${c.id}">Approve</button></div></div>`).join("")}</div></section>`;
   out += '<div class="list">';
@@ -279,7 +344,7 @@ function vClients() {
     const vids = D.videos.filter((v) => v.client_id === c.id && v.status === "waiting").length;
     const status = !p ? "No program assigned" : w < 0 ? `${esc(p.name)}, starts ${fmtDay(c.start_date)}` : w >= p.weeks.length ? `${esc(p.name)}, block finished` : `${esc(p.name)}, week ${w + 1} of ${p.weeks.length}`;
     out += `<button class="item" data-act="open-client" data-id="${c.id}"><h3>${esc(c.name || c.email)}</h3><p class="small muted">${status}</p>
-      <div class="row">${wk ? `<span class="chip num">${logged}/${wk.days.length} sessions this week</span>` : ""}${vids ? `<span class="chip gold num">${vids} video${vids > 1 ? "s" : ""} waiting</span>` : ""}</div></button>`;
+      <div class="row">${wk ? `<span class="chip num">${logged}/${wk.days.length} sessions this week</span>` : ""}${vids ? `<span class="chip accent num">${vids} video${vids > 1 ? "s" : ""} waiting</span>` : ""}</div></button>`;
   }
   if (!clients().some((c) => c.approved)) out += '<div class="empty">No clients yet.</div>';
   return out + "</div>";
@@ -326,7 +391,7 @@ function vToday() {
   out += `<h1>${todays ? esc(todays.name) + " today" : `Week ${w + 1} of ${p.weeks.length}`}</h1><p class="muted small">${esc(p.name)}</p></section><div class="list">`;
   for (const d of days) {
     const dt = ymd(sessionDate(me.start_date, w, d.dow)), l = findLog(me.id, p.id, w, d.id);
-    const state = l?.done ? '<span class="chip green">Logged</span>' : l ? '<span class="chip gold">In progress</span>' : dt < t ? '<span class="chip red">Missed</span>' : dt === t ? '<span class="chip solid">Today</span>' : `<span class="chip">${fmtDay(dt)}</span>`;
+    const state = l?.done ? '<span class="chip green">Logged</span>' : l ? '<span class="chip accent">In progress</span>' : dt < t ? '<span class="chip red">Missed</span>' : dt === t ? '<span class="chip solid">Today</span>' : `<span class="chip">${fmtDay(dt)}</span>`;
     out += `<button class="item" data-act="open-log" data-w="${w}" data-id="${d.id}"><div class="row spread"><h3>${esc(d.name)}</h3>${state}</div><p class="small muted">${fmtLong(dt)}, ${d.exercises.length} exercises</p></button>`;
   }
   out += "</div>";
@@ -387,14 +452,15 @@ function vClientVideos() {
     <section class="card"><label class="drop" id="drop" for="vfile"><strong>${ui.file ? esc(ui.file.name) : "Choose a video"}</strong>
       <span class="muted small">${ui.file ? `${(ui.file.size / 1048576).toFixed(1)} MB, tap to swap` : `Or drag one in. Side-on, whole body in frame. Up to ${api.MAX_VIDEO_MB} MB, so trim it to the set.`}</span></label>
       <input id="vfile" type="file" accept="video/*" hidden>
-      <label class="f">Exercise<select class="t" id="v-ex">${names.map((n) => `<option${ui.filmEx === n ? " selected" : ""}>${esc(n)}</option>`).join("")}<option value="Other"${ui.filmEx && !names.includes(ui.filmEx) ? " selected" : ""}>Other</option></select></label>
+      <label class="f">Exercise<input class="t" id="v-ex" list="ex-names" autocomplete="off" maxlength="80" placeholder="e.g. Back Squat" value="${esc(ui.filmEx || "")}"></label>
+      <datalist id="ex-names">${names.map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
       <label class="f">What should I look at?<textarea class="t" id="v-note" placeholder="Set 3 at 80kg. Does my back round?">${esc(ui.vnote || "")}</textarea></label>
       <div class="row"><button class="btn primary" data-act="upload"${ui.file && !ui.busy ? "" : " disabled"}>${ui.busy ? "Uploading..." : "Send to review queue"}</button></div></section>`;
   const mine = D.videos.filter((v) => v.client_id === me.id);
   out += `<section class="stack"><div class="section-head"><h2>Your videos</h2></div>${mine.length ? mine.map((v) =>
     `<article class="card qcard">${videoBox(v)}<div class="stack"><div class="row spread"><strong>${esc(v.exercise)}</strong>${v.status === "waiting" ? `<span class="chip">In ${fmtDay(v.slot)} review</span>` : verdictChip(v.verdict)}</div>
       <p class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</p>${v.note ? `<p class="small">"${esc(v.note)}"</p>` : ""}
-      ${v.status === "reviewed" ? `<div class="feedback"><span class="kicker">Coach feedback</span><p class="small">${esc(v.feedback || "No notes.")}</p></div>` : ""}</div></article>`).join("") : '<div class="empty">No videos yet. Film a working set and drop it above.</div>'}</section>`;
+      ${v.status === "reviewed" ? `<div class="feedback"><span class="kicker">Coach feedback</span>${v.review_path ? `<p class="small">Watch your breakdown, sound on.</p><div class="vid wide" data-video="${esc(v.review_path)}">Loading breakdown</div>` : ""}${v.feedback || !v.review_path ? `<p class="small">${esc(v.feedback || "No notes.")}</p>` : ""}</div>` : ""}</div></article>`).join("") : '<div class="empty">No videos yet. Film a working set and drop it above.</div>'}</section>`;
   return out;
 }
 function vHistory() {
@@ -405,14 +471,41 @@ function vHistory() {
 /* ---------- events ---------- */
 const go = (fn) => { fn(); render(); };
 
+const AUTH_ERRORS = {
+  "Invalid login credentials": "That email and password don't match. Check them, or tap Forgot password.",
+  "Email not confirmed": "Confirm your email first: tap the link we sent when you signed up, then sign in.",
+  "User already registered": "There's already an account with that email. Sign in instead, or reset your password.",
+};
+const authError = (e) => AUTH_ERRORS[e.message] || e.message || String(e);
+
 document.addEventListener("submit", async (ev) => {
-  if (ev.target.id !== "signin") return;
-  ev.preventDefault();
-  const email = document.getElementById("si-email").value.trim(), name = document.getElementById("si-name").value.trim();
-  const msg = document.getElementById("si-msg");
-  msg.textContent = "Sending...";
-  try { await api.sendLink(email, name); msg.textContent = `Check ${email} for your sign-in link. You can close this tab.`; }
-  catch (e) { msg.textContent = `Couldn't send the link: ${e.message}`; }
+  const f = ev.target;
+  if (f.id === "signin") {
+    ev.preventDefault();
+    const m = f.dataset.mode, email = document.getElementById("si-email").value.trim();
+    const pass = document.getElementById("si-pass")?.value || "", name = document.getElementById("si-name")?.value.trim() || "";
+    const msg = document.getElementById("si-msg"), btn = f.querySelector("button[type=submit]");
+    ui.authEmail = email; btn.disabled = true; msg.textContent = "One sec...";
+    try {
+      if (m === "in") { await api.signIn(email, pass); msg.textContent = ""; }
+      else if (m === "up") {
+        const r = await api.signUp(email, pass, name);
+        msg.textContent = r.session ? "" : `Nearly done. We've emailed ${email} a link to confirm it's you. Tap it, then sign in here.`;
+      } else { await api.sendReset(email); msg.textContent = `If ${email} has an account, a reset link is on its way. Check your inbox.`; }
+    } catch (e) { msg.textContent = authError(e); }
+    btn.disabled = false;
+  }
+  if (f.id === "setpass") {
+    ev.preventDefault();
+    const msg = document.getElementById("sp-msg"), btn = f.querySelector("button[type=submit]");
+    btn.disabled = true; msg.textContent = "Saving...";
+    try {
+      await api.setPassword(document.getElementById("sp-pass").value);
+      toast("Password saved. Use it next time you sign in.");
+      if (ui.recovery) { ui.recovery = false; started = null; start(await api.getSession()); }
+      else go(() => (ui.view = null));
+    } catch (e) { msg.textContent = authError(e); btn.disabled = false; }
+  }
 });
 
 document.addEventListener("click", async (ev) => {
@@ -422,10 +515,16 @@ document.addEventListener("click", async (ev) => {
   const p = program(ui.programId), wk = p?.weeks[ui.week];
   const progEdit = (fn) => { fn(); render(); saveProgramSoon(); };
   switch (act) {
-    case "signout": await api.signOut(); started = null; me = null; renderShell(vSignIn()); break;
-    case "tab": go(() => { ui.tab = v; ui.view = null; }); scrollTo(0, 0); break;
-    case "back": go(() => { ui.view = null; ui.confirmRevoke = null; ui.confirmDelProgram = false; }); break;
+    case "signout": await api.signOut(); started = null; me = null; ui.authMode = "in"; renderShell(vSignIn()); break;
+    case "auth-mode": ui.authEmail = document.getElementById("si-email")?.value.trim() || ui.authEmail; ui.authMode = v; renderShell(vSignIn()); break;
+    case "password": go(() => (ui.view = "password")); scrollTo(0, 0); break;
+    case "tab":
+    case "back":
+      if (bd?.unsaved && !confirm("Leave without saving this breakdown?")) return;
+      if (act === "tab") { go(() => { ui.tab = v; ui.view = null; }); scrollTo(0, 0); break; }
+      go(() => { ui.view = null; ui.confirmRevoke = null; ui.confirmDelProgram = false; }); break;
     case "open-early": go(() => (ui.earlyOpen = true)); break;
+    case "breakdown": go(() => { ui.bdId = id; ui.view = "breakdown"; }); scrollTo(0, 0); break;
     case "verdict": go(() => { ui.drafts[id] = { ...(ui.drafts[id] || { feedback: "" }), verdict: v }; }); break;
     case "send-feedback": {
       const dr = ui.drafts[id]; if (!dr?.verdict) return;
@@ -501,6 +600,7 @@ async function patchProfile(id, patch, msg) {
 document.addEventListener("input", (ev) => {
   const t = ev.target, a = t.dataset.input;
   if (t.id === "v-note") { ui.vnote = t.value; return; }
+  if (t.id === "v-ex") { ui.filmEx = t.value; return; }
   if (!a) return;
   const p = program(ui.programId), wk = p?.weeks[ui.week], d = +t.dataset.d, e = +t.dataset.e;
   switch (a) {
@@ -525,7 +625,6 @@ document.addEventListener("input", (ev) => {
 document.addEventListener("change", async (ev) => {
   const t = ev.target;
   if (t.id === "vfile") { const f = t.files?.[0]; if (f) setFile(f); return; }
-  if (t.id === "v-ex") { ui.filmEx = t.value; return; }
   const a = t.dataset.change; if (!a) return;
   if (a === "d-dow") { program(ui.programId).weeks[ui.week].days[+t.dataset.d].dow = +t.value; render(); saveProgramSoon(); }
   if (a === "c-prog") await patchProfile(ui.clientId, { program_id: t.value || null }, "Program assigned.");
@@ -543,7 +642,8 @@ document.addEventListener("drop", (ev) => { const z = ev.target.closest?.("#drop
 
 async function doUpload() {
   if (!ui.file || ui.busy) return;
-  const exercise = document.getElementById("v-ex")?.value || "Other", note = document.getElementById("v-note")?.value.trim() || "";
+  const exercise = document.getElementById("v-ex")?.value.trim(), note = document.getElementById("v-note")?.value.trim() || "";
+  if (!exercise) { toast("Type which exercise this is first."); document.getElementById("v-ex")?.focus(); return; }
   ui.busy = true; render();
   try {
     const row = await api.uploadVideo(me.id, ui.file, { exercise, note, slot: slotFor(new Date()) });

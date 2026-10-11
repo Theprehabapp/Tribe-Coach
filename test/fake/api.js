@@ -7,11 +7,17 @@ const coach = { id: "c", email: "coach@x", name: "Coach", role: "coach", approve
 const amy = { id: "a", email: "amy@x", name: "Amy", role: "client", approved: true, goal: "", program_id: null, start_date: "2026-09-28" };
 const ben = { id: "b", email: "ben@x", name: "Ben", role: "client", approved: false, goal: "" };
 const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [] };
-if (new URLSearchParams(location.search).get("seed")) { db.programs.push({ id: "p-seed", ...exampleProgram() }); amy.program_id = "p-seed"; }
+if (new URLSearchParams(location.search).get("seed")) {
+  db.programs.push({ id: "p-seed", ...exampleProgram() }); amy.program_id = "p-seed";
+  db.videos.push({ id: "v-seed", client_id: "a", exercise: "Back Squat", note: "Set 3, does my back round?", slot: "2026-01-01", status: "waiting", verdict: "", feedback: "", uploaded_at: "2026-01-01T09:00:00Z", storage_path: "a/x.webm", review_path: null });
+}
 const meRow = role === "coach" ? coach : amy;
-export const getSession = async () => ({ user: { id: meRow.id } });
+export const getSession = async () => (role === "none" ? null : { user: { id: meRow.id } });
 export const onAuth = () => {};
-export const sendLink = async () => {};
+export const signIn = async () => {};
+export const signUp = async () => ({ session: null });
+export const sendReset = async () => {};
+export const setPassword = async () => {};
 export const signOut = async () => {};
 export const myProfile = async () => meRow;
 export const loadAll = async () => structuredClone(db);
@@ -24,3 +30,5 @@ export const uploadVideo = async (uid, file, meta) => ({ id: "v" + Date.now(), c
 export const videoUrl = async () => "data:video/mp4;base64,";
 export const reviewVideo = async (id, verdict, feedback) => ({ id, client_id: "a", exercise: "Back Squat", status: "reviewed", verdict, feedback, slot: "2026-10-13", uploaded_at: new Date().toISOString(), reviewed_at: new Date().toISOString(), storage_path: "a/x.mp4" });
 export const cleanupVideos = async () => 0;
+export const videoBlobUrl = async () => URL.createObjectURL(await (await fetch(new URL("./sample.webm", import.meta.url))).blob());
+export const uploadBreakdown = async (v, blob) => { window.__breakdown = blob; return { ...v, review_path: "a/review.webm" }; };
