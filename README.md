@@ -27,7 +27,7 @@ npm run dev
 
 ### 3. Host it
 
-Any static host works. Build command `npm run build`, output folder `dist`, and set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` as environment variables. Cloudflare Pages and Netlify can both deploy straight from this GitHub repo.
+Any static host works. Build command `npm run build`, output folder `dist`. The live project's URL and anon key are in `.env.production`, so no environment variables are needed. The anon key is public by design: what each person can do is enforced by the database rules below. Cloudflare Pages and Netlify can both deploy straight from this GitHub repo.
 
 ### 4. First sign-in
 
