@@ -1,6 +1,6 @@
-// Review windows and program dates. Pure functions, no DOM, so they can be tested.
+// Feedback timing and program dates. Pure functions, no DOM, so they can be tested.
 
-export const REVIEW_DAYS = [2, 4]; // Tuesday, Thursday
+export const FEEDBACK_HOURS = 24; // the promise to clients: feedback within a day
 export const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export const DOW_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -19,13 +19,12 @@ export const fmtTime = (ts) => {
   return `${fmtDay(d)}, ${h % 12 || 12}:${pad(d.getMinutes())}${h < 12 ? "am" : "pm"}`;
 };
 
-// The review a video belongs to: the upload day if it's a Tuesday or Thursday, otherwise the next one.
-export function slotFor(date) {
-  const d = new Date(date);
-  for (let i = 0; i < 7; i++) {
-    const n = addDays(d, i);
-    if (REVIEW_DAYS.includes(n.getDay())) return ymd(n);
-  }
+// When feedback on a video is due, and how long is left ("5h left", "40m left", "3h overdue").
+export const dueAt = (uploadedAt) => new Date(new Date(uploadedAt).getTime() + FEEDBACK_HOURS * 36e5);
+export function timeLeft(due, now = new Date()) {
+  const ms = due - now, m = Math.round(Math.abs(ms) / 6e4), h = Math.floor(m / 60);
+  const span = h >= 48 ? `${Math.floor(h / 24)}d` : h ? `${h}h` : `${Math.max(m, 1)}m`;
+  return { overdue: ms < 0, label: ms < 0 ? `${span} overdue` : `${span} left` };
 }
 
 // Week index of a client in their program (0-based), -1 before the start date.
