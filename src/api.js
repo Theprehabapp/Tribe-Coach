@@ -39,8 +39,12 @@ export async function loadAll() {
     sb.from("logs").select("*").order("date", { ascending: false }).then(check),
     sb.from("videos").select("*").order("uploaded_at", { ascending: false }).then(check),
   ]);
-  return { profiles, programs, logs, videos };
+  // Settings arrive with the 0003 migration. Until it's run, behave as "review any time".
+  const settings = (await sb.from("settings").select("*").eq("id", 1).maybeSingle()).data || { review_days: false };
+  return { profiles, programs, logs, videos, settings };
 }
+
+export const saveSettings = (patch) => sb.from("settings").update(patch).eq("id", 1).select().single().then(check);
 
 /* ---------- profiles ---------- */
 export const updateProfile = (id, patch) => sb.from("profiles").update(patch).eq("id", id).select().single().then(check);

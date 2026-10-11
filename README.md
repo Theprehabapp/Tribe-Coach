@@ -4,7 +4,7 @@ A phone web app for Tribe HQ coaching. The coach builds programs, clients log th
 
 - **Coach:** review queue (batched by review day), a breakdown tool for each video (slow motion, frame stepping, drawing lines, circles and joint angles, recorded with your voice), program builder in Tribe notation, client roster with approvals.
 - **Client:** this week's sessions with set-by-set logging (reps, kg, RPE), video upload, feedback history including the coach's breakdown videos.
-- **Review days:** a video joins the batch for the day it's uploaded if that's a Tuesday or Thursday, otherwise the next one. See `src/schedule.js`.
+- **Review schedule:** the coach picks it at the bottom of the Review tab. **Any time** (default): videos are reviewed as they arrive and the coach gets an email for each one. **Tuesdays & Thursdays**: a video joins the batch for the day it's uploaded if that's a Tuesday or Thursday, otherwise the next one (`src/schedule.js`).
 
 Built with plain JavaScript and Vite. Supabase handles sign-in (email and password), the database and video storage.
 
@@ -13,7 +13,7 @@ Built with plain JavaScript and Vite. Supabase handles sign-in (email and passwo
 ### 1. Supabase
 
 1. Create a project at [supabase.com](https://supabase.com). Pick the Sydney region.
-2. Open **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql`, then `0002_breakdowns.sql`). This creates the tables, the access rules and the private `videos` storage bucket (50 MB per file).
+2. Open **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql`, `0002_breakdowns.sql`, `0003_review_mode_and_alerts.sql`). This creates the tables, the access rules and the private `videos` storage bucket (50 MB per file).
 3. Go to **Authentication > URL Configuration**. Set **Site URL** to wherever the app is hosted (step 3 below) and add the same address under **Redirect URLs**.
 4. Copy the **Project URL** and the **anon public** key from **Project Settings > API**. Never put the `service_role` key in this app.
 
@@ -53,6 +53,16 @@ Access is enforced in the database (row level security), not just hidden in the 
 | Profiles | all, approve, assign | own name and goal | own |
 
 Clients can't mark their own videos as reviewed, change their program, or approve themselves. `supabase/tests/` has scripts that check these rules against a plain Postgres database.
+
+## New video emails
+
+`0003_review_mode_and_alerts.sql` emails the coach through [Resend](https://resend.com) whenever a client sends a video. It reads the Resend API key from the Supabase Vault, so store it once in the SQL Editor (never in this repo):
+
+```sql
+select vault.create_secret('re_your_key_here', 'resend_api_key');
+```
+
+The sender and the app link in the email are in the `settings` table (`alert_from`, `app_url`). If the key is missing or Resend is down, the upload still goes through, just without the email.
 
 ## Breakdowns
 
