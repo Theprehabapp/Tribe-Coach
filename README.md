@@ -27,7 +27,9 @@ npm run dev
 
 ### 3. Host it
 
-Any static host works. Build command `npm run build`, output folder `dist`. The live project's URL and anon key are in `.env.production`, so no environment variables are needed. The anon key is public by design: what each person can do is enforced by the database rules below. Cloudflare Pages and Netlify can both deploy straight from this GitHub repo.
+Any static host works. Build command `npm run build`, output folder `dist`. The live project's URL and anon key are in `.env.production`, so no environment variables are needed. The anon key is public by design: what each person can do is enforced by the database rules below. Cloudflare and Netlify can both deploy straight from this GitHub repo.
+
+On Cloudflare (Workers & Pages > Create > import the repo): build command `npm run build`, deploy command `npx wrangler deploy`. `wrangler.jsonc` tells it to serve `dist`.
 
 ### 4. First sign-in
 
