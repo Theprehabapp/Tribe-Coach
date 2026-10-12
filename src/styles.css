@@ -62,11 +62,6 @@ p { margin: 0; }
 .hero { display: grid; gap: 10px; padding-block: 4px; }
 .hero .big { font-family: var(--display); font-weight: 700; font-size: clamp(52px, 15vw, 80px); line-height: .9; letter-spacing: -.04em; color: var(--fg); }
 .hero-grid { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: end; }
-.days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 6px; }
-.days span { text-align: center; font-size: 12px; font-weight: 700; padding: 6px 0; border-radius: 6px; color: var(--muted); background: var(--surface); }
-.days span.rev { color: var(--accent-ink); background: var(--accent); }
-.days span.now { outline: 2px solid var(--fg); outline-offset: -2px; color: var(--fg); }
-.days span.rev.now { color: var(--accent-ink); }
 
 .card { background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
 .list { display: grid; gap: 10px; }

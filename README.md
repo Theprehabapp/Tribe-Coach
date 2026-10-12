@@ -2,9 +2,9 @@
 
 A phone web app for Tribe HQ coaching. The coach builds programs, clients log their sessions, and clients drop technique videos into a queue that the coach reviews on Tuesdays and Thursdays.
 
-- **Coach:** review queue (batched by review day), a breakdown tool for each video (slow motion, frame stepping, drawing lines, circles and joint angles, recorded with your voice), program builder in Tribe notation, client roster with approvals.
+- **Coach:** review queue with a 24-hour countdown on each video, a breakdown tool for each video (slow motion, frame stepping, drawing lines, circles and joint angles, recorded with your voice), program builder in Tribe notation, client roster with approvals.
 - **Client:** this week's sessions with set-by-set logging (reps, kg, RPE), video upload, feedback history including the coach's breakdown videos.
-- **Review schedule:** the coach picks it at the bottom of the Review tab. **Any time** (default): videos are reviewed as they arrive and the coach gets an email for each one. **Tuesdays & Thursdays**: a video joins the batch for the day it's uploaded if that's a Tuesday or Thursday, otherwise the next one (`src/schedule.js`).
+- **24-hour feedback:** clients can send a video any day and are promised feedback within 24 hours. The coach gets an email for each new video, and the queue shows the oldest first with the time left (`FEEDBACK_HOURS` in `src/schedule.js`).
 
 Built with plain JavaScript and Vite. Supabase handles sign-in (email and password), the database and video storage.
 
@@ -62,7 +62,7 @@ Clients can't mark their own videos as reviewed, change their program, or approv
 select vault.create_secret('re_your_key_here', 'resend_api_key');
 ```
 
-The sender and the app link in the email are in the `settings` table (`alert_from`, `app_url`). If the key is missing or Resend is down, the upload still goes through, just without the email.
+The sender and the app link in the email are in the `settings` table (`alert_from`, `app_url`). Its `review_days` column is no longer used. If the key is missing or Resend is down, the upload still goes through, just without the email.
 
 ## Breakdowns
 

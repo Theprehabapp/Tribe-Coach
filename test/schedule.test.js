@@ -1,12 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { slotFor, weekOf, sessionDate, rxLine, bumpTarget, ymd } from "../src/schedule.js";
+import { dueAt, timeLeft, weekOf, sessionDate, rxLine, bumpTarget, ymd } from "../src/schedule.js";
 
-test("uploads land in the next Tuesday or Thursday", () => {
-  assert.equal(slotFor(new Date(2026, 9, 11, 20)), "2026-10-13"); // Sun -> Tue
-  assert.equal(slotFor(new Date(2026, 9, 13, 23, 59)), "2026-10-13"); // Tue night -> same Tue
-  assert.equal(slotFor(new Date(2026, 9, 14, 0, 1)), "2026-10-15"); // Wed -> Thu
-  assert.equal(slotFor(new Date(2026, 9, 16, 9)), "2026-10-20"); // Fri -> next Tue
+test("feedback is due 24 hours after upload", () => {
+  const up = new Date(2026, 9, 11, 9, 0);
+  assert.equal(dueAt(up).getTime(), new Date(2026, 9, 12, 9, 0).getTime());
+  assert.deepEqual(timeLeft(dueAt(up), new Date(2026, 9, 11, 13, 30)), { overdue: false, label: "19h left" });
+  assert.deepEqual(timeLeft(dueAt(up), new Date(2026, 9, 12, 8, 20)), { overdue: false, label: "40m left" });
+  assert.deepEqual(timeLeft(dueAt(up), new Date(2026, 9, 12, 12, 0)), { overdue: true, label: "3h overdue" });
+  assert.deepEqual(timeLeft(dueAt(up), new Date(2026, 9, 15, 9, 0)), { overdue: true, label: "3d overdue" });
 });
 
 test("week index and session dates", () => {
