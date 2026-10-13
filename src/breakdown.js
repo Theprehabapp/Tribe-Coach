@@ -118,6 +118,16 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
     }
     ctx.shadowBlur = 0;
   }
+  // While a video is seeking (scrubbing, frame steps) the browser has no frame to give, which used to
+  // paint black. Each video keeps a copy of its last good frame and shows that until the new one is ready.
+  function paintVideo(v) {
+    if (!v.w) return;
+    const fw = Math.round(v.w), fh = Math.round(v.h);
+    if (!v.last) v.last = document.createElement("canvas");
+    if (v.last.width !== fw || v.last.height !== fh) { v.last.width = fw; v.last.height = fh; v.hasFrame = false; }
+    if (v.el.readyState >= 2 && !v.el.seeking) { v.last.getContext("2d").drawImage(v.el, 0, 0, fw, fh); v.hasFrame = true; }
+    if (v.hasFrame) ctx.drawImage(v.last, v.x, v.y, v.w, v.h);
+  }
   function paintLabel(v) {
     if (!v.label || !v.w) return;
     const fs = Math.max(14, W() / 40), pad = fs * 0.45;
@@ -129,7 +139,7 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
   function frame() {
     if (st.dead) return;
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W(), H());
-    vids.forEach((v) => { if (v.w && v.el.readyState >= 2) ctx.drawImage(v.el, v.x, v.y, v.w, v.h); });
+    vids.forEach(paintVideo);
     if (vids.length > 1) vids.forEach(paintLabel);
     st.shapes.forEach(paintShape);
     if (st.drawing) paintShape(st.drawing);
@@ -173,15 +183,21 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
     if (st.rec && (performance.now() - st.recStart) / 1000 >= maxSeconds) stopRec();
   }
   // Scrubbing follows the first target; any other target moves by the same amount so lined-up reps stay lined up.
-  const seek = (el, t) => { el.currentTime = Math.min(el.duration || 0, Math.max(0, t)); };
+  // fastSeek jumps to the nearest key frame, which keeps dragging smooth on iPhone; letting go lands on the exact frame.
+  const clamp = (el, t) => Math.min(el.duration || 0, Math.max(0, t));
+  const seek = (el, t, fast) => { t = clamp(el, t); if (fast && el.fastSeek) el.fastSeek(t); else el.currentTime = t; el._target = t; };
   scrub.addEventListener("input", () => {
     scrubbing = true;
     const [lead, ...rest] = targets();
     if (!lead.duration) return;
-    const delta = (scrub.value / 1000) * lead.duration - lead.currentTime;
-    [lead, ...rest].forEach((el) => { el.pause(); seek(el, el.currentTime + delta); });
+    const from = (el) => (el.seeking && el._target != null ? el._target : el.currentTime);
+    const delta = (scrub.value / 1000) * lead.duration - from(lead);
+    [lead, ...rest].forEach((el) => { el.pause(); seek(el, from(el) + delta, true); });
   });
-  scrub.addEventListener("change", () => (scrubbing = false));
+  scrub.addEventListener("change", () => {
+    scrubbing = false;
+    targets().forEach((el) => el._target != null && seek(el, el._target)); // settle on the exact frame
+  });
   const step = (n) => targets().forEach((el) => { el.pause(); seek(el, el.currentTime + n / FPS); });
 
   function hint() {
