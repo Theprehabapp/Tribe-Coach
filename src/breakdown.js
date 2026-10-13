@@ -4,6 +4,9 @@
 // The video is painted onto a canvas every animation frame with the drawings on top. Recording
 // captures that canvas plus the microphone, so whatever the coach does while recording (play,
 // pause, scrub, draw) ends up in the file.
+//
+// Compare puts a second clip beside the first (an earlier rep, or a reference rep). Each side can be
+// lined up on its own, then both played together.
 
 const COLORS = [["#E4572E", "Red"], ["#FFFFFF", "White"], ["#3FB8F0", "Blue"]];
 const TOOLS = [["pen", "Pen"], ["line", "Line"], ["circle", "Circle"], ["angle", "Angle"]];
@@ -15,9 +18,10 @@ const TYPES = ["video/mp4;codecs=avc1,mp4a.40.2", "video/mp4", "video/webm;codec
 export const canRecord = () =>
   typeof MediaRecorder !== "undefined" && !!HTMLCanvasElement.prototype.captureStream && !!navigator.mediaDevices?.getUserMedia;
 
+const even = (n) => Math.max(2, Math.round(n / 2) * 2);
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-export function mountBreakdown(root, { src, maxSeconds = 180, maxBytes = 50 * 1048576, onSave, onClose }) {
+export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxBytes = 50 * 1048576, onSave }) {
   root.innerHTML = `
     <div class="bd-stage"><canvas class="bd-canvas" aria-label="Video with drawings. Drag to draw."></canvas></div>
     <div class="bd-bar">
@@ -26,6 +30,8 @@ export function mountBreakdown(root, { src, maxSeconds = 180, maxBytes = 50 * 10
       <button class="btn small" data-bd="fwd" aria-label="Forward one frame">Frame &rsaquo;</button>
       <span class="bd-time num small muted" data-bd-time>0:00</span>
     </div>
+    <div class="bd-bar" data-bd-targets hidden><span class="small muted">Controls move</span>
+      <div class="seg" role="group" aria-label="Which video the controls move">${[["0", "Left"], ["1", "Right"], ["both", "Both"]].map(([k, l]) => `<button data-bd="target" data-v="${k}" aria-pressed="${k === "both"}">${l}</button>`).join("")}</div></div>
     <input class="bd-scrub" type="range" min="0" max="1000" value="0" step="1" aria-label="Position in video" data-bd-scrub>
     <div class="bd-bar">
       <div class="seg" role="group" aria-label="Speed">${SPEEDS.map((s) => `<button data-bd="speed" data-v="${s}" aria-pressed="${s === 1}">${s === 1 ? "1x" : s === 0.5 ? "½x" : "¼x"}</button>`).join("")}</div>
@@ -41,21 +47,38 @@ export function mountBreakdown(root, { src, maxSeconds = 180, maxBytes = 50 * 10
 
   const $ = (sel) => root.querySelector(sel);
   const canvas = $(".bd-canvas"), ctx = canvas.getContext("2d");
-  const video = document.createElement("video");
-  video.muted = true; video.playsInline = true; video.preload = "auto"; video.src = src;
-
-  const st = { tool: "line", color: COLORS[0][0], shapes: [], drawing: null, rec: null, mic: null, chunks: [], recStart: 0, result: null, resultUrl: null, raf: 0, dead: false };
+  const st = { tool: "line", color: COLORS[0][0], shapes: [], drawing: null, rec: null, mic: null, chunks: [], recStart: 0, result: null, resultUrl: null, saved: false, raf: 0, dead: false, target: "both" };
   const W = () => canvas.width, H = () => canvas.height;
 
-  video.addEventListener("loadedmetadata", () => {
-    const k = Math.min(1, MAX_SIDE / Math.max(video.videoWidth, video.videoHeight));
-    canvas.width = Math.round((video.videoWidth * k) / 2) * 2 || 720;
-    canvas.height = Math.round((video.videoHeight * k) / 2) * 2 || 1280;
-    video.currentTime = 0.001; // paint the first frame on iOS
-  });
-  video.addEventListener("play", syncPlay);
-  video.addEventListener("pause", syncPlay);
-  video.addEventListener("error", () => { $("[data-bd-hint]").textContent = "This video couldn't be opened in the browser."; });
+  // vids[0] is the clip under review, vids[1] the optional compare clip. x/y/w/h is where each sits on the canvas.
+  const vids = [];
+  function addVideo(url, name) {
+    const el = document.createElement("video");
+    el.muted = true; el.playsInline = true; el.preload = "auto"; el.src = url;
+    el.playbackRate = speed();
+    const v = { el, url, label: name, x: 0, y: 0, w: 0, h: 0 };
+    el.addEventListener("loadedmetadata", () => { layout(); el.currentTime = 0.001; }); // paint the first frame on iOS
+    el.addEventListener("play", syncPlay);
+    el.addEventListener("pause", syncPlay);
+    el.addEventListener("error", () => { $("[data-bd-hint]").textContent = "A video couldn't be opened in the browser."; });
+    return v;
+  }
+  const speed = () => +(root.querySelector('[data-bd="speed"][aria-pressed="true"]')?.dataset.v || 1);
+  // The videos the transport controls move: just the main clip, or whichever side is picked when comparing.
+  const targets = () => (vids.length < 2 ? [vids[0]] : st.target === "both" ? vids : [vids[+st.target]]).map((v) => v.el);
+
+  function layout() {
+    const ready = vids.filter((v) => v.el.videoWidth);
+    if (!ready.length) return;
+    const hc = Math.max(...ready.map((v) => v.el.videoHeight));
+    const ws = vids.map((v) => (v.el.videoWidth ? (v.el.videoWidth * hc) / v.el.videoHeight : 0));
+    const total = ws.reduce((a, b) => a + b, 0);
+    const k = Math.min(1, MAX_SIDE / Math.max(total, hc));
+    canvas.width = even(total * k); canvas.height = even(hc * k);
+    let x = 0;
+    vids.forEach((v, i) => { Object.assign(v, { x, y: 0, w: ws[i] * k, h: hc * k }); x += ws[i] * k; });
+  }
+  vids.push(addVideo(src, label));
 
   /* ---------- drawing ---------- */
   const px = (p) => [p[0] * W(), p[1] * H()];
@@ -95,10 +118,19 @@ export function mountBreakdown(root, { src, maxSeconds = 180, maxBytes = 50 * 10
     }
     ctx.shadowBlur = 0;
   }
+  function paintLabel(v) {
+    if (!v.label || !v.w) return;
+    const fs = Math.max(14, W() / 40), pad = fs * 0.45;
+    ctx.font = `700 ${fs}px Barlow, Arial, sans-serif`; ctx.textAlign = "left"; ctx.textBaseline = "top";
+    const tw = Math.min(ctx.measureText(v.label).width, v.w - pad * 4);
+    ctx.fillStyle = "rgba(0,0,0,.65)"; ctx.fillRect(v.x + pad, v.y + pad, tw + pad * 2, fs + pad * 2);
+    ctx.fillStyle = "#fff"; ctx.fillText(v.label, v.x + pad * 2, v.y + pad * 2, tw);
+  }
   function frame() {
     if (st.dead) return;
-    if (W() && video.readyState >= 2) ctx.drawImage(video, 0, 0, W(), H());
-    else { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W(), H()); }
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W(), H());
+    vids.forEach((v) => { if (v.w && v.el.readyState >= 2) ctx.drawImage(v.el, v.x, v.y, v.w, v.h); });
+    if (vids.length > 1) vids.forEach(paintLabel);
     st.shapes.forEach(paintShape);
     if (st.drawing) paintShape(st.drawing);
     tick();
@@ -132,17 +164,25 @@ export function mountBreakdown(root, { src, maxSeconds = 180, maxBytes = 50 * 10
 
   /* ---------- transport ---------- */
   const playBtn = $('[data-bd="play"]'), scrub = $("[data-bd-scrub]"), timeEl = $("[data-bd-time]");
-  function syncPlay() { playBtn.textContent = video.paused ? "Play" : "Pause"; }
+  function syncPlay() { playBtn.textContent = targets().every((el) => el.paused) ? "Play" : "Pause"; }
   let scrubbing = false;
   function tick() {
-    const d = video.duration || 0;
-    if (!scrubbing && d) scrub.value = Math.round((video.currentTime / d) * 1000);
-    timeEl.textContent = `${fmt(video.currentTime || 0)} / ${fmt(d)}${st.rec ? `  ·  REC ${fmt((performance.now() - st.recStart) / 1000)}` : ""}`;
+    const lead = targets()[0], d = lead.duration || 0;
+    if (!scrubbing && d) scrub.value = Math.round((lead.currentTime / d) * 1000);
+    timeEl.textContent = `${fmt(lead.currentTime || 0)} / ${fmt(d)}${st.rec ? `  ·  REC ${fmt((performance.now() - st.recStart) / 1000)}` : ""}`;
     if (st.rec && (performance.now() - st.recStart) / 1000 >= maxSeconds) stopRec();
   }
-  scrub.addEventListener("input", () => { scrubbing = true; video.pause(); if (video.duration) video.currentTime = (scrub.value / 1000) * video.duration; });
+  // Scrubbing follows the first target; any other target moves by the same amount so lined-up reps stay lined up.
+  const seek = (el, t) => { el.currentTime = Math.min(el.duration || 0, Math.max(0, t)); };
+  scrub.addEventListener("input", () => {
+    scrubbing = true;
+    const [lead, ...rest] = targets();
+    if (!lead.duration) return;
+    const delta = (scrub.value / 1000) * lead.duration - lead.currentTime;
+    [lead, ...rest].forEach((el) => { el.pause(); seek(el, el.currentTime + delta); });
+  });
   scrub.addEventListener("change", () => (scrubbing = false));
-  const step = (n) => { video.pause(); video.currentTime = Math.min(video.duration || 0, Math.max(0, video.currentTime + n / FPS)); };
+  const step = (n) => targets().forEach((el) => { el.pause(); seek(el, el.currentTime + n / FPS); });
 
   function hint() {
     const last = st.shapes[st.shapes.length - 1];
@@ -156,6 +196,10 @@ export function mountBreakdown(root, { src, maxSeconds = 180, maxBytes = 50 * 10
   function recUI() {
     if (!canRecord()) { recEl.innerHTML = '<p class="small muted">This browser can\'t record a breakdown. Use Safari or Chrome on an up-to-date phone or computer.</p>'; return; }
     if (st.rec) { recEl.innerHTML = `<div class="row"><button class="btn rec on" data-bd="stop"><span class="recdot"></span>Stop recording</button><span class="small muted">Talk them through it. Recording stops by itself at ${fmt(maxSeconds)}.</span></div>`; return; }
+    if (st.saved && !st.result) {
+      recEl.innerHTML = '<div class="row"><span class="chip green">Breakdown saved</span><button class="btn small ghost" data-bd="retake">Record a new one</button></div>';
+      return;
+    }
     if (st.result) {
       const mb = st.result.size / 1048576;
       recEl.innerHTML = `<div class="stack"><div class="section-head"><h3>Your breakdown</h3><span class="small muted num">${mb.toFixed(1)} MB</span></div>
@@ -204,37 +248,62 @@ export function mountBreakdown(root, { src, maxSeconds = 180, maxBytes = 50 * 10
     const v = b.dataset.v;
     const press = (group) => root.querySelectorAll(`[data-bd="${group}"]`).forEach((x) => x.setAttribute("aria-pressed", x === b));
     switch (b.dataset.bd) {
-      case "play": video.paused ? video.play().catch(() => {}) : video.pause(); break;
+      case "play": {
+        const els = targets();
+        if (els.every((el) => el.paused)) els.forEach((el) => el.play().catch(() => {}));
+        else els.forEach((el) => el.pause());
+        break;
+      }
       case "back": step(-1); break;
       case "fwd": step(1); break;
-      case "speed": video.playbackRate = +v; press("speed"); break;
+      case "speed": press("speed"); vids.forEach((x) => (x.el.playbackRate = +v)); break;
+      case "target": st.target = v; press("target"); syncPlay(); break;
       case "tool": st.tool = v; press("tool"); { const last = st.shapes[st.shapes.length - 1]; if (last?.type === "angle" && !last.c) st.shapes.pop(); } hint(); break;
       case "color": st.color = v; press("color"); break;
       case "undo": st.shapes.pop(); hint(); break;
       case "clear": st.shapes = []; hint(); break;
       case "record": b.disabled = true; await startRec(); if (!st.rec) b.disabled = false; break;
       case "stop": stopRec(); break;
-      case "retake": dropResult(); recUI(); break;
+      case "retake": dropResult(); st.saved = false; recUI(); break;
       case "save": {
         const m = recEl.querySelector("[data-bd-msg]");
         b.disabled = true; m.textContent = "Saving...";
-        try { await onSave(st.result); dropResult(); onClose?.(true); }
+        try { await onSave(st.result); dropResult(); st.saved = true; recUI(); }
         catch (e) { m.textContent = `Didn't save: ${e.message || e}. Check your connection and try again.`; b.disabled = false; }
         break;
       }
     }
   });
 
+  function unload(v) { v.el.pause(); v.el.removeAttribute("src"); v.el.load(); URL.revokeObjectURL(v.url); }
+  function press(group, val) { root.querySelectorAll(`[data-bd="${group}"]`).forEach((x) => x.setAttribute("aria-pressed", x.dataset.v === val)); }
+
   hint(); recUI(); syncPlay();
   st.raf = requestAnimationFrame(frame);
 
   return {
     get unsaved() { return !!st.rec || !!st.result; },
+    get recording() { return !!st.rec; },
+    // Put a second clip beside the main one, or pass null to remove it. Not while recording: the
+    // canvas changes size, which a recording in progress can't follow. Drawings are cleared because
+    // they were placed for the old layout.
+    setCompare(url, name = "") {
+      if (st.rec) return false;
+      if (vids[1]) { unload(vids[1]); vids.pop(); }
+      if (url) {
+        vids[0].label = vids[0].label || "This video";
+        vids.push(addVideo(url, name));
+        vids[0].el.pause();
+      }
+      $("[data-bd-targets]").hidden = !url;
+      st.shapes = []; st.target = "both"; press("target", "both");
+      layout(); syncPlay(); hint();
+      return true;
+    },
     destroy() {
       st.dead = true; cancelAnimationFrame(st.raf);
       stopRec(); stopMic(); dropResult();
-      video.pause(); video.removeAttribute("src"); video.load();
-      URL.revokeObjectURL(src);
+      vids.forEach(unload);
     },
   };
 }

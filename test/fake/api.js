@@ -9,6 +9,8 @@ const ben = { id: "b", email: "ben@x", name: "Ben", role: "client", approved: fa
 const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [] };
 if (new URLSearchParams(location.search).get("seed")) {
   db.programs.push({ id: "p-seed", ...exampleProgram() }); amy.program_id = "p-seed";
+  db.videos.push({ id: "v-seed2", client_id: "a", exercise: "Deadlift", note: "", slot: "2026-01-02", status: "waiting", verdict: "", feedback: "", uploaded_at: "2026-01-02T09:00:00Z", storage_path: "a/y.webm", review_path: null });
+  db.videos.push({ id: "v-old", client_id: "a", exercise: "Back Squat", note: "", slot: "2025-12-01", status: "reviewed", verdict: "tweak", feedback: "Knees out.", uploaded_at: "2025-12-01T09:00:00Z", reviewed_at: "2025-12-02T09:00:00Z", storage_path: "a/z.webm", review_path: null });
   db.videos.push({ id: "v-seed", client_id: "a", exercise: "Back Squat", note: "Set 3, does my back round?", slot: "2026-01-01", status: "waiting", verdict: "", feedback: "", uploaded_at: "2026-01-01T09:00:00Z", storage_path: "a/x.webm", review_path: null });
 }
 const meRow = role === "coach" ? coach : amy;
@@ -26,9 +28,13 @@ export const createProgram = async (p) => { const row = { id: "p" + db.programs.
 export const saveProgram = async () => {};
 export const deleteProgram = async () => {};
 export const saveLog = async (l) => l;
-export const uploadVideo = async (uid, file, meta) => ({ id: "v" + Date.now(), client_id: uid, exercise: meta.exercise, note: meta.note, slot: meta.slot, status: "waiting", verdict: "", feedback: "", uploaded_at: new Date().toISOString(), storage_path: "a/x.mp4" });
+export const uploadVideo = async (uid, file, meta) => (window.__upload = file, { id: "v" + Date.now(), client_id: uid, exercise: meta.exercise, note: meta.note, slot: meta.slot, status: "waiting", verdict: "", feedback: "", uploaded_at: new Date().toISOString(), storage_path: "a/x.mp4" });
 export const videoUrl = async () => "data:video/mp4;base64,";
-export const reviewVideo = async (id, verdict, feedback) => ({ id, client_id: "a", exercise: "Back Squat", status: "reviewed", verdict, feedback, slot: "2026-10-13", uploaded_at: new Date().toISOString(), reviewed_at: new Date().toISOString(), storage_path: "a/x.mp4" });
+export const reviewVideo = async (id, verdict, feedback) => { const v = db.videos.find((x) => x.id === id) || { id, client_id: "a", exercise: "Back Squat", uploaded_at: new Date().toISOString(), storage_path: "a/x.mp4" }; Object.assign(v, { status: "reviewed", verdict, feedback, reviewed_at: new Date().toISOString() }); return structuredClone(v); };
+const refs = [];
+export const listRefs = async () => structuredClone(refs);
+export const uploadRef = async (cid, file, label) => { const r = { path: `c/ref-${refs.length}`, label }; refs.unshift(r); window.__ref = file; return r; };
+export const deleteRef = async (path) => { refs.splice(refs.findIndex((r) => r.path === path), 1); };
 export const cleanupVideos = async () => 0;
 export const videoBlobUrl = async () => URL.createObjectURL(await (await fetch(new URL("./sample.webm", import.meta.url))).blob());
 export const uploadBreakdown = async (v, blob) => { window.__breakdown = blob; return { ...v, review_path: "a/review.webm" }; };

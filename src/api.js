@@ -100,6 +100,23 @@ export async function videoUrl(path) {
   return signedUrl;
 }
 
+/* ---------- coach reference clips (for side-by-side compare) ----------
+   Kept in the coach's own folder as ref-<label>--<id>.<ext>. The label lives in the file name, so no table is needed. */
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50) || "reference";
+const unslug = (s) => s.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+export async function listRefs(coachId) {
+  const files = check(await sb.storage.from(BUCKET).list(coachId, { limit: 1000, sortBy: { column: "created_at", order: "desc" } }));
+  return files.filter((f) => f.name.startsWith("ref-")).map((f) => ({ path: `${coachId}/${f.name}`, label: unslug(f.name.slice(4).split("--")[0]) }));
+}
+export async function uploadRef(coachId, file, label) {
+  const type = (file.type || "video/mp4").split(";")[0];
+  const ext = type === "video/webm" ? "webm" : type === "video/quicktime" ? "mov" : "mp4";
+  const path = `${coachId}/ref-${slug(label)}--${crypto.randomUUID().slice(0, 8)}.${ext}`;
+  check(await sb.storage.from(BUCKET).upload(path, file, { contentType: type, upsert: false }));
+  return { path, label: unslug(slug(label)) };
+}
+export const deleteRef = async (path) => check(await sb.storage.from(BUCKET).remove([path]));
+
 export const reviewVideo = (id, verdict, feedback) =>
   sb.from("videos").update({ verdict, feedback, status: "reviewed", reviewed_at: new Date().toISOString() }).eq("id", id).select().single().then(check);
 
