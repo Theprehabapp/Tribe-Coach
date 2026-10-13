@@ -2,7 +2,7 @@
 
 A phone web app for Tribe HQ coaching. The coach builds programs, clients log their sessions, and clients drop technique videos into a queue that the coach reviews on Tuesdays and Thursdays.
 
-- **Coach:** review queue with a 24-hour countdown on each video, a breakdown tool for each video (slow motion, frame stepping, drawing lines, circles and joint angles, recorded with your voice), program builder in Tribe notation, client roster with approvals.
+- **Coach:** review queue with a 24-hour countdown on each video, reviewed one at a time with **Send and next video**, a breakdown tool (slow motion, frame stepping, drawing lines, circles and joint angles, side-by-side compare, recorded with your voice), program builder in Tribe notation, client roster with approvals.
 - **Client:** this week's sessions with set-by-set logging (reps, kg, RPE), video upload, feedback history including the coach's breakdown videos.
 - **24-hour feedback:** clients can send a video any day and are promised feedback within 24 hours. The coach gets an email for each new video, and the queue shows the oldest first with the time left (`FEEDBACK_HOURS` in `src/schedule.js`).
 
@@ -64,9 +64,17 @@ select vault.create_secret('re_your_key_here', 'resend_api_key');
 
 The sender and the app link in the email are in the `settings` table (`alert_from`, `app_url`). Its `review_days` column is no longer used. If the key is missing or Resend is down, the upload still goes through, just without the email.
 
-## Breakdowns
+## Reviewing
 
-On a review card, **Break it down** opens the clip full size. Tap **Record breakdown**, then play, slow down (½x, ¼x), step frame by frame, scrub and draw while you talk. The screen and your voice are saved as one video (up to 3 minutes) in the client's folder, and they watch it under their feedback. It needs a recent Safari or Chrome and microphone access.
+**Start reviewing** on the queue opens the oldest video. Pick a verdict, add notes and tap **Send and next video**; the next one is already downloading while you work. **Skip for now** leaves a video in the queue.
+
+**Breakdowns:** tap **Record breakdown**, then play, slow down (½x, ¼x), step frame by frame, scrub and draw while you talk. The screen and your voice are saved as one video (up to 3 minutes) in the client's folder, and they watch it under their feedback. It needs a recent Safari or Chrome and microphone access.
+
+**Compare** puts a second clip beside the one you're reviewing: one of the athlete's earlier videos (same exercise first) or one of your reference reps. Pick **Left** or **Right** to line the reps up, then **Both** to play and step them together. Reference reps are stored in your own folder in the `videos` bucket as `ref-<name>--<id>.mp4`; add and delete them from the compare panel.
+
+## Video size
+
+Videos are shrunk on the uploader's phone before they're sent: 720p, about 2.5 Mbps, a key frame every second, and the index at the front of the file so playback starts straight away. That's roughly 20 MB a minute instead of 100+ MB. It uses the browser's built-in encoder (WebCodecs, `src/shrink.js`); if a phone can't do it, the original is sent as before and the 50 MB limit applies.
 
 ## Storage
 

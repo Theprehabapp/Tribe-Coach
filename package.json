@@ -10,7 +10,8 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.117.1"
+    "@supabase/supabase-js": "2.117.1",
+    "mediabunny": "1.60.0"
   },
   "devDependencies": {
     "vite": "7.3.6"

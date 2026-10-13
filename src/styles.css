@@ -1,4 +1,5 @@
 /* Layout: phone-first app shell. Top bar with wordmark and role switch, one content column, bottom tab bar. */
+[hidden] { display: none !important; }
 :root {
   --bg: #0B0B0C; --surface: #141416; --surface-2: #1B1B1E; --rule: #2C2C31;
   --fg: #F4F2EE; --muted: #9A9AA2; --accent: #F4F2EE; --accent-ink: #0B0B0C;
@@ -154,3 +155,5 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--muted); }
 @media (prefers-reduced-motion: no-preference) { .btn.rec.on .recdot { animation: blink 1s steps(2) infinite; } }
 @keyframes blink { 50% { opacity: .2; } }
 .vid.wide { aspect-ratio: auto; max-height: 70vh; }
+.ref-row { flex-wrap: nowrap; }
+.ref-row .item { flex: 1; min-width: 0; }
