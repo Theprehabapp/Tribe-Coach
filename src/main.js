@@ -13,7 +13,7 @@ const app = document.getElementById("app");
 const tabsEl = document.getElementById("tabs");
 
 // All data the signed-in person may see, loaded once and kept in sync as they act.
-let D = { profiles: [], programs: [], logs: [], videos: [] };
+let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false };
 let me = null; // signed-in profile
 let ui = { tab: null, view: null, programId: null, week: 0, clientId: null, logKey: null, drafts: {}, file: null, busy: false };
 
@@ -27,8 +27,10 @@ const today = () => ymd(new Date());
 const findLog = (cid, pid, w, dayId) => D.logs.find((l) => l.client_id === cid && l.program_id === pid && l.week === w && l.day_id === dayId);
 const waiting = () => D.videos.filter((v) => v.status === "waiting");
 const newId = () => crypto.randomUUID().slice(0, 8);
+const unread = (cid) => D.messages.filter((m) => m.client_id === cid && m.sender_id !== me.id && !m.read_at).length;
 
 let bd = null; // the open breakdown tool, if any
+let stopChat = null; // live message subscription
 
 let toastT;
 function toast(msg) {
@@ -65,6 +67,7 @@ async function start(session) {
     if (!me) return renderShell(vPending(true));
     if (!me.approved) return renderShell(vPending(false));
     D = await api.loadAll();
+    stopChat?.(); stopChat = D.chatReady ? api.onMessage(onIncoming) : null;
     ui.tab = isCoach() ? "queue" : "today";
     render();
   } catch (e) {
@@ -121,13 +124,16 @@ function vPending(noProfile) {
 }
 
 /* ---------- main render ---------- */
-function render() {
+function renderTabs() {
   const tabs = isCoach()
-    ? [["queue", "Review", waiting().length], ["programs", "Programs"], ["clients", "Clients", clients().filter((c) => !c.approved).length]]
-    : [["today", "Training"], ["videos", "Videos"], ["history", "Log"]];
+    ? [["queue", "Review", waiting().length], ["programs", "Programs"], ["clients", "Clients", clients().filter((c) => !c.approved).length + clients().reduce((n, c) => n + unread(c.id), 0)]]
+    : [["today", "Training"], ["videos", "Videos"], ["chat", "Coach", unread(me.id)], ["history", "Log"]];
   document.querySelector(".tabs").hidden = false;
   tabsEl.innerHTML = tabs.map(([k, label, n]) =>
     `<button data-act="tab" data-v="${k}"${ui.tab === k && !ui.view ? ' aria-current="page"' : ""}><span class="dot"></span>${label}${n ? ` <span class="count num">${n}</span>` : ""}</button>`).join("");
+}
+function render() {
+  renderTabs();
 
   if (bd && ui.view !== "review") { bd.destroy(); bd = null; }
   if (ui.view !== "review") dropPrefetch();
@@ -140,9 +146,10 @@ function render() {
   else if (ui.view === "password") html = vSetPassword(false);
   else if (ui.view === "review") html = vReview();
   else if (isCoach()) html = ui.tab === "queue" ? vQueue() : ui.tab === "programs" ? vPrograms() : vClients();
-  else html = ui.tab === "today" ? vToday() : ui.tab === "videos" ? vClientVideos() : vHistory();
+  else html = ui.tab === "today" ? vToday() : ui.tab === "videos" ? vClientVideos() : ui.tab === "chat" ? vClientChat() : vHistory();
   app.innerHTML = html + footer();
   hydrateVideos();
+  afterChatPaint();
   if (ui.view === "review") { openBreakdown(); paintCompare(); }
 }
 
@@ -204,9 +211,9 @@ function nextAfter(v) {
   const rest = queue().filter((x) => x.id !== v.id);
   return rest.find((x) => x.uploaded_at > v.uploaded_at) || rest[0] || null;
 }
-function openReview(id) {
+function openReview(id, lib = false) {
   if (bd) { bd.destroy(); bd = null; }
-  ui.cmpOpen = false;
+  ui.cmpOpen = false; ui.lib = lib;
   go(() => { ui.view = id ? "review" : null; ui.bdId = id; });
   scrollTo(0, 0);
 }
@@ -228,6 +235,14 @@ function vReview() {
   if (!v?.storage_path) { ui.view = null; return vQueue(); }
   const list = queue(), at = list.findIndex((x) => x.id === v.id), left = timeLeft(dueAt(v.uploaded_at));
   const p = program(c?.program_id), w = c ? weekOf(c.start_date, new Date()) : -1;
+  if (ui.lib) return `<div class="row"><button class="link" data-act="lib-back">Back to ${esc(c?.name || "client")}'s library</button></div>
+    <section class="hero"><div class="kicker">${esc(c?.name || "Client")}, library</div><h1>${esc(v.exercise)}</h1>
+    <div class="row">${v.status === "waiting" ? '<span class="chip">Waiting for review</span>' : verdictChip(v.verdict)}<span class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</span></div>
+    ${v.feedback ? `<p class="small">Your feedback: ${esc(v.feedback)}</p>` : ""}</section>
+    <div class="row"><button class="btn small" data-act="cmp-toggle" id="cmp-btn">Compare</button><span class="small muted" id="cmp-state">Put an earlier rep or a reference rep beside this one.</span></div>
+    <div id="cmp-pick" class="card stack" hidden></div>
+    <div id="bd-root" class="bd"><div class="empty">Loading video</div></div>
+    <p class="small muted">${D.chatReady ? `Record and save a breakdown and it's sent to ${esc(c?.name || "them")} in your chat.` : "Saving a breakdown here replaces the one on this video."}</p>`;
   return `<div class="row spread"><button class="link" data-act="back">Back to queue</button>${at >= 0 ? `<span class="small muted num">${at + 1} of ${list.length}</span>` : ""}</div>
     <section class="hero"><div class="kicker">${esc(c?.name || "Client")}${p ? `, ${esc(p.name)}${w >= 0 ? ` week ${w + 1}` : ""}` : ""}</div><h1>${esc(v.exercise)}</h1>
     <div class="row"><span class="chip${left.overdue ? " red" : ""}">${left.label}</span><span class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</span></div>
@@ -259,12 +274,17 @@ async function openBreakdown() {
       src, label: fmtDay(new Date(v.uploaded_at)),
       maxBytes: api.MAX_VIDEO_MB * 1048576,
       onSave: async (blob) => {
+        if (ui.lib && D.chatReady) {
+          const clip_path = await api.uploadChatClip(v.client_id, blob);
+          addMessage(await api.sendMessage({ client_id: v.client_id, body: `Breakdown: ${v.exercise}`, video_id: v.id, clip_path }));
+          return toast(`Sent to ${profile(v.client_id)?.name || "the athlete"}'s chat.`);
+        }
         const row = await api.uploadBreakdown(v, blob);
         D.videos = D.videos.map((x) => (x.id === row.id ? row : x));
-        toast("Breakdown saved. Add a verdict and send it.");
+        toast(ui.lib ? "Breakdown saved." : "Breakdown saved. Add a verdict and send it.");
       },
     });
-    prefetch(next ? [next.storage_path] : []);
+    if (!ui.lib) prefetch(next ? [next.storage_path] : []);
   } catch (e) {
     root.innerHTML = `<div class="empty">Couldn't open the video: ${esc(e.message || e)}</div>`;
   }
@@ -390,7 +410,7 @@ function vClients() {
     const vids = D.videos.filter((v) => v.client_id === c.id && v.status === "waiting").length;
     const status = !p ? "No program assigned" : w < 0 ? `${esc(p.name)}, starts ${fmtDay(c.start_date)}` : w >= p.weeks.length ? `${esc(p.name)}, block finished` : `${esc(p.name)}, week ${w + 1} of ${p.weeks.length}`;
     out += `<button class="item" data-act="open-client" data-id="${c.id}"><h3>${esc(c.name || c.email)}</h3><p class="small muted">${status}</p>
-      <div class="row">${wk ? `<span class="chip num">${logged}/${wk.days.length} sessions this week</span>` : ""}${vids ? `<span class="chip accent num">${vids} video${vids > 1 ? "s" : ""} waiting</span>` : ""}</div></button>`;
+      <div class="row">${wk ? `<span class="chip num">${logged}/${wk.days.length} sessions this week</span>` : ""}${vids ? `<span class="chip accent num">${vids} video${vids > 1 ? "s" : ""} waiting</span>` : ""}${unread(c.id) ? `<span class="chip solid num">${unread(c.id)} new message${unread(c.id) > 1 ? "s" : ""}</span>` : ""}</div></button>`;
   }
   if (!clients().some((c) => c.approved)) out += '<div class="empty">No clients yet.</div>';
   return out + "</div>";
@@ -398,21 +418,115 @@ function vClients() {
 function vClientDetail() {
   const c = profile(ui.clientId);
   if (!c) { ui.view = null; return vClients(); }
+  const tab = ui.clientTab || "profile", n = unread(c.id);
   let out = `<div class="row"><button class="link" data-act="back">Back to clients</button></div>
     <section class="stack"><div class="kicker">Client</div><h1>${esc(c.name || c.email)}</h1><p class="small muted">${esc(c.email)}</p>
+    <div class="seg" role="group" aria-label="Section">${[["profile", "Profile"], ["chat", `Chat${n ? ` (${n})` : ""}`], ["library", "Library"]].map(([k, l]) =>
+      `<button data-act="client-tab" data-v="${k}" aria-pressed="${tab === k}">${l}</button>`).join("")}</div></section>`;
+  if (tab === "chat") return out + chatBox(c.id, c.name || "them");
+  if (tab === "library") return out + vLibrary(c);
+  out += `<section class="stack">
     <label class="f">Goal<input class="t" id="c-goal" data-input="c-goal" value="${esc(c.goal)}"></label>
     <div class="grid2"><label class="f">Program<select class="t" id="c-prog" data-change="c-prog"><option value="">None</option>${D.programs.map((p) => `<option value="${p.id}"${c.program_id === p.id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
     <label class="f">Start date<input class="t" type="date" id="c-start" data-change="c-start" value="${esc(c.start_date || "")}"></label></div>
     <p class="muted small">Start on a Monday so week numbers line up with the calendar.</p></section>`;
   const logs = D.logs.filter((l) => l.client_id === c.id);
   out += `<section class="stack"><div class="section-head"><h2>Logged sessions</h2><span class="muted small num">${logs.length}</span></div>${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Nothing logged yet.</div>'}</section>`;
-  const vids = D.videos.filter((v) => v.client_id === c.id);
-  out += `<section class="stack"><div class="section-head"><h2>Videos</h2></div>${vids.length ? '<div class="list">' + vids.map((v) =>
-    `<div class="item static"><div class="row spread"><strong>${esc(v.exercise)}</strong>${v.status === "waiting" ? `<span class="chip">Waiting</span>` : verdictChip(v.verdict)}</div><p class="small muted">${fmtTime(v.uploaded_at)}</p></div>`).join("") + "</div>" : '<div class="empty">No videos yet.</div>'}</section>`;
   out += `<div class="row">${ui.confirmRevoke === c.id
     ? `<span>Remove ${esc(c.name || c.email)}'s access? Their history stays and you can approve them again later.</span><button class="btn small primary" data-act="revoke-yes">Remove access</button><button class="btn small" data-act="revoke-no">Cancel</button>`
     : '<button class="btn small danger" data-act="revoke">Remove access</button>'}</div>`;
   return out;
+}
+
+/* ----- coach: athlete video library ----- */
+const movement = (s) => s.trim().replace(/\s+/g, " ").toLowerCase().replace(/\b\w/g, (x) => x.toUpperCase());
+function vLibrary(c) {
+  const vids = D.videos.filter((v) => v.client_id === c.id && v.storage_path).sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at));
+  const by = ui.libGroup || "movement", groups = {};
+  vids.forEach((v) => (groups[by === "theme" ? v.theme || "No theme yet" : movement(v.exercise)] ||= []).push(v));
+  const themes = [...new Set(D.videos.map((v) => v.theme).filter(Boolean))].sort();
+  const names = Object.keys(groups).sort((a, b) => (a === "No theme yet") - (b === "No theme yet") || a.localeCompare(b));
+  let out = `<section class="stack"><div class="row spread"><div class="seg" role="group" aria-label="Group by">${[["movement", "By movement"], ["theme", "By theme"]].map(([k, l]) =>
+    `<button data-act="lib-group" data-v="${k}" aria-pressed="${by === k}">${l}</button>`).join("")}</div></div>
+    <p class="small muted">Open any video to slow it down, draw on it or compare it with another rep. A breakdown you record from here goes to ${c.name ? esc(c.name) + "'s" : "their"} chat. Give a video a theme to save it: saved videos are never cleared by the 30-day clean-up.</p>
+    <datalist id="themes">${themes.map((t) => `<option value="${esc(t)}">`).join("")}</datalist>`;
+  if (!vids.length) return out + '<div class="empty">No videos yet.</div></section>';
+  for (const g of names) {
+    out += `<div class="stack"><div class="section-head"><h3>${esc(g)}</h3><span class="small muted num">${groups[g].length}</span></div><div class="list">${groups[g].map((v) =>
+      `<div class="item static stack"><div class="row spread"><strong>${esc(v.exercise)}</strong><span class="row">${v.keep ? '<span class="chip green">Saved</span>' : ""}${v.status === "waiting" ? '<span class="chip">Waiting</span>' : verdictChip(v.verdict)}</span></div>
+        <p class="small muted">${fmtTime(v.uploaded_at)}${v.note ? ` · "${esc(v.note)}"` : ""}</p>
+        <div class="row"><input class="t lib-theme" list="themes" maxlength="40" placeholder="Add a theme" aria-label="Theme" data-change="lib-theme" data-id="${v.id}" value="${esc(v.theme || "")}">
+        <button class="btn small" data-act="lib-open" data-id="${v.id}">Open</button>
+        <button class="btn small ghost" data-act="lib-keep" data-id="${v.id}">${v.keep ? "Unsave" : "Save"}</button>
+        ${D.chatReady ? `<button class="btn small ghost" data-act="discuss" data-id="${v.id}">Discuss</button>` : ""}</div></div>`).join("")}</div></div>`;
+  }
+  return out + "</section>";
+}
+
+/* ----- chat (both sides) ----- */
+function vClientChat() {
+  return `<section class="hero"><div class="kicker">Coach</div><h1>Chat</h1><p class="muted small">Questions about your feedback, your program or anything else.</p></section>` + chatBox(me.id, "your coach");
+}
+const openThread = () => (isCoach() ? (ui.view === "client" && ui.clientTab === "chat" ? ui.clientId : null) : (ui.tab === "chat" && !ui.view ? me.id : null));
+function chatBox(cid, who) {
+  if (!D.chatReady) return '<div class="empty">Chat isn\'t switched on yet. Run the 0004 database update (see the README).</div>';
+  const ref = ui.chatRef && D.videos.find((v) => v.id === ui.chatRef && v.client_id === cid);
+  return `<section class="stack"><div class="chat" id="chat-list">${chatList(cid, who)}</div>
+    <form id="chat-form" class="chat-compose stack" data-cid="${cid}">
+      ${ref ? `<div class="row"><span class="chip">About ${esc(ref.exercise)}, ${fmtDay(new Date(ref.uploaded_at))}</span><button class="link small" type="button" data-act="unref">Remove</button></div>` : ""}
+      <div class="row chat-row"><textarea class="t" id="chat-body" data-input="chat" rows="2" maxlength="4000" placeholder="Message ${esc(who)}">${esc(ui.chatDraft || "")}</textarea>
+      <button class="btn primary" type="submit">Send</button></div></form></section>`;
+}
+function chatList(cid, who) {
+  const msgs = D.messages.filter((m) => m.client_id === cid);
+  if (!msgs.length) return `<p class="small muted">No messages yet. Say hi to ${esc(who)}.</p>`;
+  return msgs.map((m) => {
+    const v = m.video_id && D.videos.find((x) => x.id === m.video_id);
+    return `<div class="msg${m.sender_id === me.id ? " mine" : ""}">${v ? `<span class="small muted">About ${esc(v.exercise)}, ${fmtDay(new Date(v.uploaded_at))}</span>` : ""}
+      ${m.clip_path ? `<div class="vid wide" data-video="${esc(m.clip_path)}">Loading video</div>` : ""}${m.body ? `<p>${esc(m.body)}</p>` : ""}<span class="tiny muted">${fmtTime(m.created_at)}</span></div>`;
+  }).join("");
+}
+// After the chat is on screen: scroll to the newest message and mark the other side's messages read.
+function afterChatPaint() {
+  const cid = openThread(), list = document.getElementById("chat-list");
+  if (!cid || !list) return;
+  list.scrollTop = list.scrollHeight;
+  if (unread(cid)) {
+    const now = new Date().toISOString();
+    D.messages.forEach((m) => { if (m.client_id === cid && m.sender_id !== me.id && !m.read_at) m.read_at = now; });
+    renderTabs();
+    api.markRead(cid).catch((e) => console.warn("mark read", e));
+  }
+}
+function repaintChat() {
+  const cid = openThread(), list = document.getElementById("chat-list");
+  if (!cid || !list) return false;
+  list.innerHTML = chatList(cid, isCoach() ? profile(cid)?.name || "them" : "your coach");
+  hydrateVideos(); afterChatPaint();
+  return true;
+}
+function addMessage(m) {
+  if (D.messages.some((x) => x.id === m.id)) return false;
+  D.messages.push(m);
+  return true;
+}
+function onIncoming(m) {
+  if (!addMessage(m)) return;
+  if (repaintChat()) return;
+  renderTabs();
+  if (isCoach() && ui.tab === "clients" && !ui.view && !bd) render(); // refresh the unread chips
+}
+async function sendChat(form) {
+  const cid = form.dataset.cid, box = document.getElementById("chat-body"), body = box.value.trim();
+  if (!body) return;
+  const btn = form.querySelector("button[type=submit]");
+  btn.disabled = true;
+  try {
+    const row = await api.sendMessage({ client_id: cid, body, video_id: ui.chatRef || null });
+    addMessage(row);
+    ui.chatDraft = ""; ui.chatRef = null; render();
+    document.getElementById("chat-body")?.focus();
+  } catch (e) { fail(e, "Your message"); btn.disabled = false; }
 }
 function logSummary(l) {
   const p = program(l.program_id), day = p?.weeks[l.week]?.days.find((d) => d.id === l.day_id);
@@ -505,7 +619,7 @@ function vClientVideos() {
   out += `<section class="stack"><div class="section-head"><h2>Your videos</h2></div>${mine.length ? mine.map((v) =>
     `<article class="card qcard">${videoBox(v)}<div class="stack"><div class="row spread"><strong>${esc(v.exercise)}</strong>${v.status === "waiting" ? `<span class="chip">Feedback by ${fmtTime(dueAt(v.uploaded_at))}</span>` : verdictChip(v.verdict)}</div>
       <p class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</p>${v.note ? `<p class="small">"${esc(v.note)}"</p>` : ""}
-      ${v.status === "reviewed" ? `<div class="feedback"><span class="kicker">Coach feedback</span>${v.review_path ? `<p class="small">Watch your breakdown, sound on.</p><div class="vid wide" data-video="${esc(v.review_path)}">Loading breakdown</div>` : ""}${v.feedback || !v.review_path ? `<p class="small">${esc(v.feedback || "No notes.")}</p>` : ""}</div>` : ""}</div></article>`).join("") : '<div class="empty">No videos yet. Film a working set and drop it above.</div>'}</section>`;
+      ${v.status === "reviewed" ? `<div class="feedback"><span class="kicker">Coach feedback</span>${v.review_path ? `<p class="small">Watch your breakdown, sound on.</p><div class="vid wide" data-video="${esc(v.review_path)}">Loading breakdown</div>` : ""}${v.feedback || !v.review_path ? `<p class="small">${esc(v.feedback || "No notes.")}</p>` : ""}${D.chatReady ? `<button class="link small" data-act="ask" data-id="${v.id}">Ask your coach about this</button>` : ""}</div>` : ""}</div></article>`).join("") : '<div class="empty">No videos yet. Film a working set and drop it above.</div>'}</section>`;
   return out;
 }
 function vHistory() {
@@ -540,6 +654,7 @@ document.addEventListener("submit", async (ev) => {
     } catch (e) { msg.textContent = authError(e); }
     btn.disabled = false;
   }
+  if (f.id === "chat-form") { ev.preventDefault(); sendChat(f); return; }
   if (f.id === "setpass") {
     ev.preventDefault();
     const msg = document.getElementById("sp-msg"), btn = f.querySelector("button[type=submit]");
@@ -560,7 +675,7 @@ document.addEventListener("click", async (ev) => {
   const p = program(ui.programId), wk = p?.weeks[ui.week];
   const progEdit = (fn) => { fn(); render(); saveProgramSoon(); };
   switch (act) {
-    case "signout": await api.signOut(); started = null; me = null; ui.authMode = "in"; renderShell(vSignIn()); break;
+    case "signout": stopChat?.(); stopChat = null; await api.signOut(); started = null; me = null; ui.authMode = "in"; renderShell(vSignIn()); break;
     case "auth-mode": ui.authEmail = document.getElementById("si-email")?.value.trim() || ui.authEmail; ui.authMode = v; renderShell(vSignIn()); break;
     case "password": go(() => (ui.view = "password")); scrollTo(0, 0); break;
     case "tab":
@@ -569,6 +684,22 @@ document.addEventListener("click", async (ev) => {
       if (act === "tab") { go(() => { ui.tab = v; ui.view = null; }); scrollTo(0, 0); break; }
       go(() => { ui.view = null; ui.confirmRevoke = null; ui.confirmDelProgram = false; }); break;
     case "review": openReview(id); break;
+    case "lib-open": openReview(id, true); break;
+    case "lib-back":
+      if (bd?.unsaved && !confirm("Leave without saving this breakdown?")) return;
+      if (bd) { bd.destroy(); bd = null; }
+      go(() => { ui.lib = false; ui.view = "client"; ui.clientTab = "library"; }); break;
+    case "lib-group": go(() => (ui.libGroup = v)); break;
+    case "lib-keep": {
+      const x = D.videos.find((y) => y.id === id);
+      try { const row = await api.setLibrary(id, { keep: !x.keep }); D.videos = D.videos.map((y) => (y.id === id ? row : y)); render(); }
+      catch (err) { fail(err, "Library"); }
+      break;
+    }
+    case "client-tab": go(() => (ui.clientTab = v)); break;
+    case "discuss": go(() => { ui.chatRef = id; ui.clientTab = "chat"; }); break;
+    case "ask": go(() => { ui.chatRef = id; ui.tab = "chat"; ui.view = null; }); scrollTo(0, 0); break;
+    case "unref": ui.chatRef = null; ui.chatDraft = document.getElementById("chat-body")?.value || ""; render(); break;
     case "rv-verdict": {
       ui.drafts[id] = { ...(ui.drafts[id] || { feedback: "" }), verdict: v };
       b.parentElement.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b));
@@ -633,7 +764,7 @@ document.addEventListener("click", async (ev) => {
       catch (err) { fail(err, "Delete"); }
       break;
     case "approve": await patchProfile(id, { approved: true }, "Approved."); break;
-    case "open-client": go(() => { ui.clientId = id; ui.view = "client"; }); scrollTo(0, 0); break;
+    case "open-client": go(() => { ui.clientId = id; ui.view = "client"; ui.clientTab = unread(id) ? "chat" : "profile"; ui.chatRef = null; }); scrollTo(0, 0); break;
     case "revoke": go(() => (ui.confirmRevoke = ui.clientId)); break;
     case "revoke-no": go(() => (ui.confirmRevoke = null)); break;
     case "revoke-yes": await patchProfile(ui.clientId, { approved: false }, "Access removed."); ui.view = null; ui.confirmRevoke = null; render(); break;
@@ -667,6 +798,7 @@ document.addEventListener("input", (ev) => {
   const t = ev.target, a = t.dataset.input;
   if (t.id === "v-note") { ui.vnote = t.value; return; }
   if (t.id === "v-ex") { ui.filmEx = t.value; return; }
+  if (t.id === "chat-body") { ui.chatDraft = t.value; return; }
   if (!a) return;
   const p = program(ui.programId), wk = p?.weeks[ui.week], d = +t.dataset.d, e = +t.dataset.e;
   switch (a) {
@@ -695,6 +827,11 @@ document.addEventListener("change", async (ev) => {
   const a = t.dataset.change; if (!a) return;
   if (a === "d-dow") { program(ui.programId).weeks[ui.week].days[+t.dataset.d].dow = +t.value; render(); saveProgramSoon(); }
   if (a === "c-prog") await patchProfile(ui.clientId, { program_id: t.value || null }, "Program assigned.");
+  if (a === "lib-theme") {
+    const theme = t.value.trim().slice(0, 40);
+    try { const row = await api.setLibrary(t.dataset.id, theme ? { theme, keep: true } : { theme }); D.videos = D.videos.map((y) => (y.id === row.id ? row : y)); render(); }
+    catch (err) { fail(err, "Theme"); }
+  }
   if (a === "c-start") await patchProfile(ui.clientId, { start_date: t.value || null }, "Start date saved.");
 });
 

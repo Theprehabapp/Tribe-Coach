@@ -33,13 +33,15 @@ export async function myProfile(uid) {
 
 // RLS decides what comes back: the coach gets everyone, a client gets their own rows and assigned program.
 export async function loadAll() {
-  const [profiles, programs, logs, videos] = await Promise.all([
+  const [profiles, programs, logs, videos, messages] = await Promise.all([
     sb.from("profiles").select("*").order("created_at").then(check),
     sb.from("programs").select("*").order("created_at", { ascending: false }).then(check),
     sb.from("logs").select("*").order("date", { ascending: false }).then(check),
     sb.from("videos").select("*").order("uploaded_at", { ascending: false }).then(check),
+    // Chat arrived with migration 0004. Until it's run, the rest of the app keeps working without it.
+    sb.from("messages").select("*").order("created_at").then(check).catch(() => null),
   ]);
-  return { profiles, programs, logs, videos };
+  return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages };
 }
 
 /* ---------- profiles ---------- */
@@ -117,13 +119,34 @@ export async function uploadRef(coachId, file, label) {
 }
 export const deleteRef = async (path) => check(await sb.storage.from(BUCKET).remove([path]));
 
+/* ---------- chat ---------- */
+export const sendMessage = (m) =>
+  sb.from("messages").insert({ client_id: m.client_id, body: m.body || "", video_id: m.video_id || null, clip_path: m.clip_path || null }).select().single().then(check);
+export const markRead = (clientId) => sb.rpc("mark_read", { thread: clientId }).then(check);
+// Calls fn with each new message this person is allowed to see, as it's posted.
+export function onMessage(fn) {
+  const ch = sb.channel("messages").on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (p) => fn(p.new)).subscribe();
+  return () => sb.removeChannel(ch);
+}
+// A breakdown recorded from the library goes to the athlete's chat as a clip in their folder.
+export async function uploadChatClip(clientId, blob) {
+  const type = (blob.type || "video/mp4").split(";")[0];
+  const path = `${clientId}/chat-${crypto.randomUUID()}.${type === "video/webm" ? "webm" : "mp4"}`;
+  check(await sb.storage.from(BUCKET).upload(path, blob, { contentType: type, upsert: false }));
+  return path;
+}
+
+/* ---------- library ---------- */
+export const setLibrary = (id, patch) => sb.from("videos").update(patch).eq("id", id).select().single().then(check);
+
 export const reviewVideo = (id, verdict, feedback) =>
   sb.from("videos").update({ verdict, feedback, status: "reviewed", reviewed_at: new Date().toISOString() }).eq("id", id).select().single().then(check);
 
-// Free storage space: delete files (client video and breakdown) for videos reviewed more than `days` ago. Written feedback stays.
+// Free storage space: delete files (client video and breakdown) for videos reviewed more than `days` ago,
+// except ones saved to an athlete's library. Written feedback stays.
 export async function cleanupVideos(videos, days = 30) {
   const cutoff = Date.now() - days * 864e5;
-  const old = videos.filter((v) => v.status === "reviewed" && (v.storage_path || v.review_path) && new Date(v.reviewed_at).getTime() < cutoff);
+  const old = videos.filter((v) => v.status === "reviewed" && !v.keep && (v.storage_path || v.review_path) && new Date(v.reviewed_at).getTime() < cutoff);
   if (!old.length) return 0;
   check(await sb.storage.from(BUCKET).remove(old.flatMap((v) => [v.storage_path, v.review_path].filter(Boolean))));
   check(await sb.from("videos").update({ storage_path: null, review_path: null }).in("id", old.map((v) => v.id)));

@@ -13,7 +13,7 @@ Built with plain JavaScript and Vite. Supabase handles sign-in (email and passwo
 ### 1. Supabase
 
 1. Create a project at [supabase.com](https://supabase.com). Pick the Sydney region.
-2. Open **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql`, `0002_breakdowns.sql`, `0003_review_mode_and_alerts.sql`). This creates the tables, the access rules and the private `videos` storage bucket (50 MB per file).
+2. Open **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql` to `0004_chat_and_library.sql`). This creates the tables, the access rules and the private `videos` storage bucket (50 MB per file).
 3. Go to **Authentication > URL Configuration**. Set **Site URL** to wherever the app is hosted (step 3 below) and add the same address under **Redirect URLs**.
 4. Copy the **Project URL** and the **anon public** key from **Project Settings > API**. Never put the `service_role` key in this app.
 
@@ -71,6 +71,14 @@ The sender and the app link in the email are in the `settings` table (`alert_fro
 **Breakdowns:** tap **Record breakdown**, then play, slow down (½x, ¼x), step frame by frame, scrub and draw while you talk. The screen and your voice are saved as one video (up to 3 minutes) in the client's folder, and they watch it under their feedback. It needs a recent Safari or Chrome and microphone access.
 
 **Compare** puts a second clip beside the one you're reviewing: one of the athlete's earlier videos (same exercise first) or one of your reference reps. Pick **Left** or **Right** to line the reps up, then **Both** to play and step them together. Reference reps are stored in your own folder in the `videos` bucket as `ref-<name>--<id>.mp4`; add and delete them from the compare panel.
+
+## Chat and library
+
+Each athlete has a **Chat** with you: on your side under Clients, then their name; on theirs, the **Coach** tab. They can tap **Ask your coach about this** on a reviewed video to start a message about it. Messages show up live, unread counts appear on the tabs, and the other person gets an email (through the same Resend key as the new-video email) unless they already have an unread message from you in the last 30 minutes.
+
+Each athlete's **Library** lists all their videos grouped by movement or by your own themes. Open one to slow it down, draw on it or compare it, and a breakdown you record there is sent to their chat. Giving a video a theme (or tapping Save) keeps it: the 30-day clean-up skips saved videos.
+
+Run `supabase/migrations/0004_chat_and_library.sql` in the SQL Editor to switch these on. Until then the app works as before and the chat shows a note.
 
 ## Video size
 
