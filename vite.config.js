@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => ({
     name: "fake-api",
     enforce: "pre",
     resolveId(src, importer) {
-      if (src === "./api.js" && /src\/(main|upload)\.js$/.test(importer || "")) return fileURLToPath(new URL("./test/fake/api.js", import.meta.url));
+      if (src === "./api.js" && /src\/(main|upload|notify)\.js$/.test(importer || "")) return fileURLToPath(new URL("./test/fake/api.js", import.meta.url));
     },
   }] : [],
 }));

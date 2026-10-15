@@ -46,3 +46,9 @@ export const deleteRef = async (path) => { refs.splice(refs.findIndex((r) => r.p
 export const cleanupVideos = async () => 0;
 export const videoBlobUrl = async () => URL.createObjectURL(await (await fetch(new URL("./sample.webm", import.meta.url))).blob());
 export const uploadBreakdown = async (v, blob) => { window.__breakdown = blob; return { ...v, review_path: "a/review.webm" }; };
+let pushKey = null;
+export const pushPublicKey = async () => pushKey;
+export const setPushKeys = async (pub, priv) => { pushKey = pub; window.__pushKeys = { pub, priv }; };
+export const savePushSub = async (e, p, a) => { window.__pushSub = { e, p, a }; };
+export const deletePushSub = async () => { window.__pushSub = null; };
+export const loadMessages = async () => structuredClone(db.messages);

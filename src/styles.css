@@ -169,3 +169,5 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--muted); }
 .chat-row { flex-wrap: nowrap; align-items: flex-end; }
 .chat-row textarea { flex: 1; min-height: 44px; resize: vertical; }
 .lib-theme { flex: 1; min-width: 140px; }
+.notice { padding: 12px 14px; }
+.notice p { margin: 0; }

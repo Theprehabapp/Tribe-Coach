@@ -13,7 +13,7 @@ Built with plain JavaScript and Vite. Supabase handles sign-in (email and passwo
 ### 1. Supabase
 
 1. Create a project at [supabase.com](https://supabase.com). Pick the Sydney region.
-2. Open **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql` to `0004_chat_and_library.sql`). This creates the tables, the access rules and the private `videos` storage bucket (50 MB per file).
+2. Open **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql` to `0005_push.sql`). This creates the tables, the access rules and the private `videos` storage bucket (50 MB per file).
 3. Go to **Authentication > URL Configuration**. Set **Site URL** to wherever the app is hosted (step 3 below) and add the same address under **Redirect URLs**.
 4. Copy the **Project URL** and the **anon public** key from **Project Settings > API**. Never put the `service_role` key in this app.
 
@@ -80,6 +80,15 @@ Each athlete's **Library** lists all their videos grouped by movement or by your
 
 Run `supabase/migrations/0004_chat_and_library.sql` in the SQL Editor to switch these on. Until then the app works as before and the chat shows a note.
 
+## Phone notifications
+
+A new chat message also sends a phone notification to the other person, if they've switched it on with **Turn on notifications** in the chat. Tapping the notification opens that chat.
+
+- Run `supabase/migrations/0005_push.sql` in the SQL Editor first.
+- The coach turns it on first. That tap creates the notification keys on the coach's phone and stores the private one in the Supabase Vault; athletes can turn it on after that. Turning it on again on a new phone reuses the same keys.
+- iPhone (iOS 16.4 or later) only allows notifications for apps opened from the Home Screen: in Safari tap **Share**, **Add to Home Screen**, then open Tribe from the Home Screen icon. The app explains this when it's opened in Safari. Android and computers work straight from the browser.
+- Sending goes through this app's own `/api/push` endpoint (`worker/push.js`, Web Push with VAPID), so there's no extra service or key to sign up for.
+
 ## Video size
 
 Videos are shrunk on the uploader's phone before they're sent: 720p, about 2.5 Mbps, a key frame every second, and the index at the front of the file so playback starts straight away. That's roughly 20 MB a minute instead of 100+ MB. It uses the browser's built-in encoder (WebCodecs, `src/shrink.js`); if a phone can't do it, the original is sent as before and the 50 MB limit applies.
@@ -91,6 +100,6 @@ Video files are the only thing that grows. The coach view has a **Clear video fi
 ## Tests
 
 ```sh
-npm test                       # review-day and program maths
+npm test                       # review-day and program maths, push encryption
 npx vite build --mode fake     # UI build against an in-memory backend, for offline smoke tests
 ```
