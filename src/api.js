@@ -121,6 +121,7 @@ export async function uploadRef(coachId, file, label) {
 export const deleteRef = async (path) => check(await sb.storage.from(BUCKET).remove([path]));
 
 /* ---------- chat ---------- */
+export const loadMessages = () => sb.from("messages").select("*").order("created_at").then(check);
 export const sendMessage = (m) =>
   sb.from("messages").insert({ client_id: m.client_id, body: m.body || "", video_id: m.video_id || null, clip_path: m.clip_path || null }).select().single().then(check);
 export const markRead = (clientId) => sb.rpc("mark_read", { thread: clientId }).then(check);
@@ -136,6 +137,12 @@ export async function uploadChatClip(clientId, blob) {
   check(await sb.storage.from(BUCKET).upload(path, blob, { contentType: type, upsert: false }));
   return path;
 }
+
+/* ---------- phone notifications ---------- */
+export const pushPublicKey = async () => check(await sb.from("settings").select("push_public_key").eq("id", 1).maybeSingle())?.push_public_key || null;
+export const setPushKeys = (public_key, private_key) => sb.rpc("set_push_keys", { public_key, private_key }).then(check);
+export const savePushSub = (sub_endpoint, sub_p256dh, sub_auth) => sb.rpc("save_push_sub", { sub_endpoint, sub_p256dh, sub_auth }).then(check);
+export const deletePushSub = (sub_endpoint) => sb.rpc("delete_push_sub", { sub_endpoint }).then(check);
 
 /* ---------- library ---------- */
 // One labelled breakdown clip, added after any already on the video.

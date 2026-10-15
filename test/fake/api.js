@@ -48,3 +48,9 @@ export const videoBlobUrl = async () => URL.createObjectURL(await (await fetch(n
 export const uploadBreakdown = async (v, blob) => { window.__breakdown = blob; return { ...v, review_path: "a/review.webm" }; };
 export const addClip = async (v, blob, label) => { window.__breakdown = blob; const row = db.videos.find((x) => x.id === v.id); row.clips = [...(v.clips || []), { path: `a/review-${row.clips.length}.webm`, label }]; return structuredClone(row); };
 export const deleteClip = async (v, path) => { const row = db.videos.find((x) => x.id === v.id); row.clips = row.clips.filter((c) => c.path !== path); return structuredClone(row); };
+let pushKey = null;
+export const pushPublicKey = async () => pushKey;
+export const setPushKeys = async (pub, priv) => { pushKey = pub; window.__pushKeys = { pub, priv }; };
+export const savePushSub = async (e, p, a) => { window.__pushSub = { e, p, a }; };
+export const deletePushSub = async () => { window.__pushSub = null; };
+export const loadMessages = async () => structuredClone(db.messages);

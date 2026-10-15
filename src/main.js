@@ -3,6 +3,7 @@ import * as api from "./api.js";
 import { exampleProgram } from "./example.js";
 import { mountBreakdown } from "./breakdown.js";
 import { prepareVideo, checkVideo, warmUp } from "./upload.js";
+import * as notify from "./notify.js";
 import {
   FEEDBACK_HOURS, DOW_LONG, W1_LINE, ymd, fmtDay, fmtLong, fmtTime,
   dueAt, timeLeft, weekOf, sessionDate, rxLine, bumpTarget,
@@ -72,6 +73,8 @@ async function start(session) {
     stopChat?.(); stopChat = D.chatReady ? api.onMessage(onIncoming) : null;
     ui.tab = isCoach() ? "queue" : "today";
     render();
+    if (location.hash) { openLink(location.hash); history.replaceState(null, "", location.pathname + location.search); }
+    notify.state().then((st) => { ui.push = st; if (!bd) render(); }).catch(() => {});
   } catch (e) {
     console.error(e);
     renderShell(`<div class="empty">Couldn't load your data: ${esc(e.message)}. Refresh to try again.</div>`);
@@ -160,7 +163,7 @@ function lockup() {
 }
 function footer() {
   return lockup() + `<div class="row" style="justify-content:center">
-    <span class="small muted">${esc(me.email || "")}</span><button class="btn small ghost" data-act="password">Change password</button><button class="btn small ghost" data-act="signout">Sign out</button>
+    <span class="small muted">${esc(me.email || "")}</span>${D.chatReady && ui.push === "on" ? '<button class="btn small ghost" data-act="push-off">Turn off notifications</button>' : ""}<button class="btn small ghost" data-act="password">Change password</button><button class="btn small ghost" data-act="signout">Sign out</button>
     ${isCoach() ? '<button class="btn small ghost" data-act="cleanup">Clear video files reviewed 30+ days ago</button>' : ""}</div>`;
 }
 
@@ -486,12 +489,36 @@ const openThread = () => (isCoach() ? (ui.view === "client" && ui.clientTab === 
 function chatBox(cid, who) {
   if (!D.chatReady) return '<div class="empty">Chat isn\'t switched on yet. Run the 0004 database update (see the README).</div>';
   const ref = ui.chatRef && D.videos.find((v) => v.id === ui.chatRef && v.client_id === cid);
-  return `<section class="stack"><div class="chat" id="chat-list">${chatList(cid, who)}</div>
+  return `<section class="stack">${pushNotice(who)}<div class="chat" id="chat-list">${chatList(cid, who)}</div>
     <form id="chat-form" class="chat-compose stack" data-cid="${cid}">
       ${ref ? `<div class="row"><span class="chip">About ${esc(ref.exercise)}, ${fmtDay(new Date(ref.uploaded_at))}</span><button class="link small" type="button" data-act="unref">Remove</button></div>` : ""}
       <div class="row chat-row"><textarea class="t" id="chat-body" data-input="chat" rows="2" maxlength="4000" placeholder="Message ${esc(who)}">${esc(ui.chatDraft || "")}</textarea>
       <button class="btn primary" type="submit">Send</button></div></form></section>`;
 }
+function pushNotice(who) {
+  const st = ui.push;
+  if (st === "off") return `<div class="card row spread notice"><span class="small">Get a phone alert when ${esc(who)} messages you.</span><button class="btn small primary" data-act="push-on">Turn on notifications</button></div>`;
+  if (st === "install") return `<div class="card notice"><p class="small">To get a phone alert when ${esc(who)} messages you, add this app to your Home Screen: tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>, then open Tribe from there and turn notifications on.</p></div>`;
+  if (st === "blocked") return '<div class="card notice"><p class="small">Notifications are blocked for this app. Allow them in your phone\'s settings to get an alert for new messages.</p></div>';
+  return "";
+}
+// Opens what a notification points at: "#chat" for an athlete, "#chat-<athlete id>" for the coach.
+function openLink(hash) {
+  if (bd || !me) return;
+  const m = /^#chat(?:-(.+))?$/.exec(hash || "");
+  if (!m) return;
+  if (isCoach() && m[1] && profile(m[1])) go(() => { ui.tab = "clients"; ui.view = "client"; ui.clientId = m[1]; ui.clientTab = "chat"; });
+  else if (!isCoach()) go(() => { ui.tab = "chat"; ui.view = null; });
+  scrollTo(0, 0);
+}
+// Live updates pause while the phone is locked or the app is in the background; catch up on return.
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState !== "visible" || !me || !D.chatReady) return;
+  try { (await api.loadMessages()).forEach((m) => { const i = D.messages.findIndex((x) => x.id === m.id); if (i < 0) D.messages.push(m); else D.messages[i] = m; }); }
+  catch { return; }
+  if (!repaintChat()) { renderTabs(); if (isCoach() && ui.tab === "clients" && !ui.view && !bd) render(); }
+});
+navigator.serviceWorker?.addEventListener("message", (e) => { if (e.data?.type === "open") openLink(new URL(e.data.url).hash); });
 function chatList(cid, who) {
   const msgs = D.messages.filter((m) => m.client_id === cid);
   if (!msgs.length) return `<p class="small muted">No messages yet. Say hi to ${esc(who)}.</p>`;
@@ -714,6 +741,14 @@ document.addEventListener("click", async (ev) => {
     case "client-tab": go(() => (ui.clientTab = v)); break;
     case "discuss": go(() => { ui.chatRef = id; ui.clientTab = "chat"; }); break;
     case "ask": go(() => { ui.chatRef = id; ui.tab = "chat"; ui.view = null; }); scrollTo(0, 0); break;
+    case "push-on":
+      b.disabled = true;
+      try { await notify.turnOn(isCoach()); ui.push = "on"; toast("Notifications are on for this phone."); }
+      catch (err) { err.userFacing ? toast(err.message) : fail(err, "Notifications"); }
+      render(); break;
+    case "push-off":
+      try { await notify.turnOff(); ui.push = "off"; toast("Notifications are off for this phone."); } catch (err) { fail(err, "Notifications"); }
+      render(); break;
     case "unref": ui.chatRef = null; ui.chatDraft = document.getElementById("chat-body")?.value || ""; render(); break;
     case "rv-verdict": {
       ui.drafts[id] = { ...(ui.drafts[id] || { feedback: "" }), verdict: v };
