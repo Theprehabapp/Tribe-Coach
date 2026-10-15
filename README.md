@@ -70,6 +70,8 @@ The sender and the app link in the email are in the `settings` table (`alert_fro
 
 **Breakdowns:** tap **Record breakdown**, then play, slow down (½x, ¼x), step frame by frame, scrub and draw while you talk. The screen and your voice are saved as one video (up to 3 minutes) in the client's folder, and they watch it under their feedback. It needs a recent Safari or Chrome and microphone access.
 
+**Several points per video:** after `supabase/migrations/0006_breakdown_clips.sql` is run, each recording is one labelled point ("Bar path", "Bracing"; unnamed ones become Point 1, Point 2). Save one, tap **Record another point**, and so on. They're listed above the feedback, where you can watch or delete each one, and the athlete sees them numbered with their labels once you send. Before 0006 is run, a video has one breakdown and saving again replaces it.
+
 **Compare** puts a second clip beside the one you're reviewing: one of the athlete's earlier videos (same exercise first) or one of your reference reps. Pick **Left** or **Right** to line the reps up, then **Both** to play and step them together. Reference reps are stored in your own folder in the `videos` bucket as `ref-<name>--<id>.mp4`; add and delete them from the compare panel.
 
 ## Chat and library
