@@ -13,7 +13,7 @@ const app = document.getElementById("app");
 const tabsEl = document.getElementById("tabs");
 
 // All data the signed-in person may see, loaded once and kept in sync as they act.
-let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false };
+let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false };
 let me = null; // signed-in profile
 let ui = { tab: null, view: null, programId: null, week: 0, clientId: null, logKey: null, drafts: {}, file: null, busy: false };
 
@@ -27,6 +27,8 @@ const today = () => ymd(new Date());
 const findLog = (cid, pid, w, dayId) => D.logs.find((l) => l.client_id === cid && l.program_id === pid && l.week === w && l.day_id === dayId);
 const waiting = () => D.videos.filter((v) => v.status === "waiting");
 const newId = () => crypto.randomUUID().slice(0, 8);
+// Breakdown clips on a video, oldest first: one from before labels (review_path), then the labelled ones.
+const clipsOf = (v) => [...(v.review_path ? [{ path: v.review_path, label: "Breakdown" }] : []), ...(v.clips || [])];
 const unread = (cid) => D.messages.filter((m) => m.client_id === cid && m.sender_id !== me.id && !m.read_at).length;
 
 let bd = null; // the open breakdown tool, if any
@@ -178,12 +180,12 @@ function vQueue() {
 function queueRow(v) {
   const c = profile(v.client_id), left = timeLeft(dueAt(v.uploaded_at));
   return `<button class="item" data-act="review" data-id="${v.id}"><div class="row spread"><h3>${esc(c?.name || "Client")}: ${esc(v.exercise)}</h3><span class="chip${left.overdue ? " red" : ""}">${left.label}</span></div>
-    <p class="small muted">Uploaded ${fmtTime(v.uploaded_at)}${v.review_path ? ", breakdown saved" : ""}</p>${v.note ? `<p class="small">"${esc(v.note)}"</p>` : ""}</button>`;
+    <p class="small muted">Uploaded ${fmtTime(v.uploaded_at)}${clipsOf(v).length ? `, ${clipsOf(v).length} breakdown${clipsOf(v).length > 1 ? "s" : ""} saved` : ""}</p>${v.note ? `<p class="small">"${esc(v.note)}"</p>` : ""}</button>`;
 }
 function reviewedList() {
   const done = D.videos.filter((v) => v.status === "reviewed").sort((a, b) => (b.reviewed_at || "").localeCompare(a.reviewed_at || ""));
   return done.length ? `<details class="stack"><summary>Reviewed (${done.length})</summary><div class="list" style="margin-top:10px">${done.slice(0, 30).map((v) =>
-    `<div class="item static"><div class="row spread"><strong>${esc(profile(v.client_id)?.name || "Client")} - ${esc(v.exercise)}</strong><span class="row">${v.review_path ? '<span class="chip">Breakdown</span>' : ""}${verdictChip(v.verdict)}</span></div><p class="small muted">${esc(v.feedback)}</p></div>`).join("")}</div></details>` : "";
+    `<div class="item static"><div class="row spread"><strong>${esc(profile(v.client_id)?.name || "Client")} - ${esc(v.exercise)}</strong><span class="row">${clipsOf(v).length ? `<span class="chip">${clipsOf(v).length > 1 ? `${clipsOf(v).length} breakdowns` : "Breakdown"}</span>` : ""}${verdictChip(v.verdict)}</span></div><p class="small muted">${esc(v.feedback)}</p></div>`).join("")}</div></details>` : "";
 }
 function videoBox(v) {
   if (!v.storage_path) return '<div class="vid placeholder">Video file cleared after review.</div>';
@@ -250,9 +252,18 @@ function vReview() {
     <div class="row"><button class="btn small" data-act="cmp-toggle" id="cmp-btn">Compare</button><span class="small muted" id="cmp-state">Put an earlier rep or a reference rep beside this one.</span></div>
     <div id="cmp-pick" class="card stack" hidden></div>
     <div id="bd-root" class="bd"><div class="empty">Loading video</div></div>
-    <p class="small muted">To send a breakdown: tap Record, then play, slow down, pause and draw while you talk. Everything on screen and your voice go into one video for ${esc(c?.name || "your client")}.</p>
+    <p class="small muted">To send a breakdown: tap Record, then play, slow down, pause and draw while you talk. Everything on screen and your voice go into one video for ${esc(c?.name || "your client")}.${D.clipsReady ? " Cover one point per recording and label it; they all go out together when you send." : ""}</p>
+    ${D.clipsReady ? `<section class="card stack" id="rv-clips">${clipsPanel(v)}</section>` : ""}
     <section class="card stack" id="rv-panel">${reviewPanel(v)}</section>`;
 }
+function clipsPanel(v) {
+  const list = clipsOf(v);
+  return `<div class="section-head"><h3>Breakdowns</h3><span class="small muted num">${list.length}</span></div>
+    ${list.length ? `<div class="list">${list.map((c, i) => `<div class="item static row spread"><span><span class="num muted">${i + 1}.</span> ${esc(c.label)}</span>
+      <span class="row"><button class="btn small ghost" data-act="clip-play" data-path="${esc(c.path)}">Watch</button><button class="btn small ghost" data-act="clip-del" data-id="${v.id}" data-path="${esc(c.path)}" aria-label="Delete ${esc(c.label)}">Delete</button></span></div>`).join("")}</div>
+      <div id="clip-watch"></div>` : '<p class="small muted">None yet. Record one point, label it, then record the next.</p>'}`;
+}
+function paintClips(v) { const el = document.getElementById("rv-clips"); if (el) el.innerHTML = clipsPanel(v); }
 function reviewPanel(v) {
   const d = ui.drafts[v.id] || { verdict: "", feedback: "" }, next = nextAfter(v);
   return `<h3>Feedback</h3>
@@ -270,18 +281,22 @@ async function openBreakdown() {
     const src = await clipUrl(v.storage_path);
     if (!src) throw new Error("download failed");
     if (ui.view !== "review" || ui.bdId !== v.id || !root.isConnected) return URL.revokeObjectURL(src);
+    const toChat = ui.lib && D.chatReady, multi = toChat || D.clipsReady;
+    const cur = () => D.videos.find((x) => x.id === v.id) || v;
     bd = mountBreakdown(root, {
       src, label: fmtDay(new Date(v.uploaded_at)),
       maxBytes: api.MAX_VIDEO_MB * 1048576,
-      onSave: async (blob) => {
-        if (ui.lib && D.chatReady) {
+      multi, nextLabel: () => (toChat ? v.exercise : `Point ${clipsOf(cur()).length + 1}`),
+      onSave: async (blob, label) => {
+        if (toChat) {
           const clip_path = await api.uploadChatClip(v.client_id, blob);
-          addMessage(await api.sendMessage({ client_id: v.client_id, body: `Breakdown: ${v.exercise}`, video_id: v.id, clip_path }));
+          addMessage(await api.sendMessage({ client_id: v.client_id, body: label && label !== v.exercise ? `Breakdown: ${v.exercise}, ${label}` : `Breakdown: ${v.exercise}`, video_id: v.id, clip_path }));
           return toast(`Sent to ${profile(v.client_id)?.name || "the athlete"}'s chat.`);
         }
-        const row = await api.uploadBreakdown(v, blob);
+        const row = D.clipsReady ? await api.addClip(cur(), blob, label) : await api.uploadBreakdown(v, blob);
         D.videos = D.videos.map((x) => (x.id === row.id ? row : x));
-        toast(ui.lib ? "Breakdown saved." : "Breakdown saved. Add a verdict and send it.");
+        paintClips(row);
+        toast(ui.lib ? "Breakdown saved." : D.clipsReady ? `Saved "${label}". Record another point, or add a verdict and send.` : "Breakdown saved. Add a verdict and send it.");
       },
     });
     if (!ui.lib) prefetch(next ? [next.storage_path] : []);
@@ -619,7 +634,7 @@ function vClientVideos() {
   out += `<section class="stack"><div class="section-head"><h2>Your videos</h2></div>${mine.length ? mine.map((v) =>
     `<article class="card qcard">${videoBox(v)}<div class="stack"><div class="row spread"><strong>${esc(v.exercise)}</strong>${v.status === "waiting" ? `<span class="chip">Feedback by ${fmtTime(dueAt(v.uploaded_at))}</span>` : verdictChip(v.verdict)}</div>
       <p class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</p>${v.note ? `<p class="small">"${esc(v.note)}"</p>` : ""}
-      ${v.status === "reviewed" ? `<div class="feedback"><span class="kicker">Coach feedback</span>${v.review_path ? `<p class="small">Watch your breakdown, sound on.</p><div class="vid wide" data-video="${esc(v.review_path)}">Loading breakdown</div>` : ""}${v.feedback || !v.review_path ? `<p class="small">${esc(v.feedback || "No notes.")}</p>` : ""}${D.chatReady ? `<button class="link small" data-act="ask" data-id="${v.id}">Ask your coach about this</button>` : ""}</div>` : ""}</div></article>`).join("") : '<div class="empty">No videos yet. Film a working set and drop it above.</div>'}</section>`;
+      ${v.status === "reviewed" ? `<div class="feedback"><span class="kicker">Coach feedback</span>${clipsOf(v).length ? `<p class="small">Watch your breakdown${clipsOf(v).length > 1 ? "s" : ""}, sound on.</p>${clipsOf(v).map((c, i, all) => `${all.length > 1 ? `<p class="kicker">${i + 1}. ${esc(c.label)}</p>` : ""}<div class="vid wide" data-video="${esc(c.path)}">Loading breakdown</div>`).join("")}` : ""}${v.feedback || !clipsOf(v).length ? `<p class="small">${esc(v.feedback || "No notes.")}</p>` : ""}${D.chatReady ? `<button class="link small" data-act="ask" data-id="${v.id}">Ask your coach about this</button>` : ""}</div>` : ""}</div></article>`).join("") : '<div class="empty">No videos yet. Film a working set and drop it above.</div>'}</section>`;
   return out;
 }
 function vHistory() {
@@ -728,6 +743,18 @@ document.addEventListener("click", async (ev) => {
     case "cmp-toggle": ui.cmpOpen = !ui.cmpOpen; paintCompare(); break;
     case "cmp-pick": pickCompare(b.dataset.path, b.dataset.label); break;
     case "cmp-clear": if (bd?.setCompare(null)) cmpState("Put an earlier rep or a reference rep beside this one."); else toast("Stop recording first."); break;
+    case "clip-play": {
+      const box = document.getElementById("clip-watch");
+      if (box) { box.innerHTML = `<div class="vid wide" data-video="${esc(b.dataset.path)}">Loading breakdown</div>`; hydrateVideos(); }
+      break;
+    }
+    case "clip-del": {
+      const v0 = D.videos.find((x) => x.id === id), c = v0 && clipsOf(v0).find((x) => x.path === b.dataset.path);
+      if (!c || !confirm(`Delete the breakdown "${c.label}"?`)) return;
+      try { const row = await api.deleteClip(v0, c.path); D.videos = D.videos.map((x) => (x.id === row.id ? row : x)); paintClips(row); }
+      catch (err) { fail(err, "Delete"); }
+      break;
+    }
     case "ref-del":
       if (!confirm("Delete this reference rep?")) return;
       try { await api.deleteRef(b.dataset.path); ui.refs = ui.refs.filter((r) => r.path !== b.dataset.path); paintCompare(); }

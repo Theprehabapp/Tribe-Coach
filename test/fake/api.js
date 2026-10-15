@@ -9,10 +9,10 @@ const ben = { id: "b", email: "ben@x", name: "Ben", role: "client", approved: fa
 const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [] };
 if (new URLSearchParams(location.search).get("seed")) {
   db.programs.push({ id: "p-seed", ...exampleProgram() }); amy.program_id = "p-seed";
-  db.videos.push({ id: "v-seed2", client_id: "a", exercise: "Deadlift", note: "", slot: "2026-01-02", status: "waiting", verdict: "", feedback: "", uploaded_at: "2026-01-02T09:00:00Z", storage_path: "a/y.webm", review_path: null });
-  db.videos.push({ id: "v-old", client_id: "a", exercise: "Back Squat", note: "", slot: "2025-12-01", status: "reviewed", verdict: "tweak", feedback: "Knees out.", uploaded_at: "2025-12-01T09:00:00Z", reviewed_at: "2025-12-02T09:00:00Z", storage_path: "a/z.webm", review_path: null });
+  db.videos.push({ id: "v-seed2", client_id: "a", exercise: "Deadlift", note: "", slot: "2026-01-02", status: "waiting", verdict: "", feedback: "", uploaded_at: "2026-01-02T09:00:00Z", storage_path: "a/y.webm", review_path: null, clips: [] });
+  db.videos.push({ id: "v-old", client_id: "a", exercise: "Back Squat", note: "", slot: "2025-12-01", status: "reviewed", verdict: "tweak", feedback: "Knees out.", uploaded_at: "2025-12-01T09:00:00Z", reviewed_at: "2025-12-02T09:00:00Z", storage_path: "a/z.webm", review_path: null, clips: [{ path: "a/r1.webm", label: "Bar path" }, { path: "a/r2.webm", label: "Bracing" }] });
   db.messages.push({ id: "m-seed", client_id: "a", sender_id: "a", body: "Should I go lighter next week?", video_id: "v-old", clip_path: null, created_at: "2025-12-03T09:00:00Z", read_at: null });
-  db.videos.push({ id: "v-seed", client_id: "a", exercise: "Back Squat", note: "Set 3, does my back round?", slot: "2026-01-01", status: "waiting", verdict: "", feedback: "", uploaded_at: "2026-01-01T09:00:00Z", storage_path: "a/x.webm", review_path: null });
+  db.videos.push({ id: "v-seed", client_id: "a", exercise: "Back Squat", note: "Set 3, does my back round?", slot: "2026-01-01", status: "waiting", verdict: "", feedback: "", uploaded_at: "2026-01-01T09:00:00Z", storage_path: "a/x.webm", review_path: null, clips: [] });
 }
 const meRow = role === "coach" ? coach : amy;
 export const getSession = async () => (role === "none" ? null : { user: { id: meRow.id } });
@@ -23,7 +23,7 @@ export const sendReset = async () => {};
 export const setPassword = async () => {};
 export const signOut = async () => {};
 export const myProfile = async () => meRow;
-export const loadAll = async () => ({ ...structuredClone(db), chatReady: true });
+export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips") });
 const listeners = [];
 export const onMessage = (fn) => { listeners.push(fn); return () => {}; };
 window.__incoming = (body, video_id = null) => { const m = { id: "m" + Math.random(), client_id: "a", sender_id: role === "coach" ? "a" : "c", body, video_id, clip_path: null, created_at: new Date().toISOString(), read_at: null }; db.messages.push(m); listeners.forEach((f) => f(structuredClone(m))); };
@@ -46,3 +46,5 @@ export const deleteRef = async (path) => { refs.splice(refs.findIndex((r) => r.p
 export const cleanupVideos = async () => 0;
 export const videoBlobUrl = async () => URL.createObjectURL(await (await fetch(new URL("./sample.webm", import.meta.url))).blob());
 export const uploadBreakdown = async (v, blob) => { window.__breakdown = blob; return { ...v, review_path: "a/review.webm" }; };
+export const addClip = async (v, blob, label) => { window.__breakdown = blob; const row = db.videos.find((x) => x.id === v.id); row.clips = [...(v.clips || []), { path: `a/review-${row.clips.length}.webm`, label }]; return structuredClone(row); };
+export const deleteClip = async (v, path) => { const row = db.videos.find((x) => x.id === v.id); row.clips = row.clips.filter((c) => c.path !== path); return structuredClone(row); };

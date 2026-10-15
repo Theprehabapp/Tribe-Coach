@@ -41,7 +41,8 @@ export async function loadAll() {
     // Chat arrived with migration 0004. Until it's run, the rest of the app keeps working without it.
     sb.from("messages").select("*").order("created_at").then(check).catch(() => null),
   ]);
-  return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages };
+  // Labelled breakdown clips arrived with migration 0006; until it's run, one breakdown per video as before.
+  return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages, clipsReady: videos.some((v) => "clips" in v) };
 }
 
 /* ---------- profiles ---------- */
@@ -137,6 +138,26 @@ export async function uploadChatClip(clientId, blob) {
 }
 
 /* ---------- library ---------- */
+// One labelled breakdown clip, added after any already on the video.
+export async function addClip(video, blob, label) {
+  const type = (blob.type || "video/mp4").split(";")[0];
+  const path = `${video.client_id}/review-${crypto.randomUUID()}.${type === "video/webm" ? "webm" : "mp4"}`;
+  check(await sb.storage.from(BUCKET).upload(path, blob, { contentType: type, upsert: false }));
+  try {
+    return check(await sb.from("videos").update({ clips: [...(video.clips || []), { path, label }] }).eq("id", video.id).select().single());
+  } catch (e) {
+    await sb.storage.from(BUCKET).remove([path]);
+    throw e;
+  }
+}
+export async function deleteClip(video, path) {
+  const row = path === video.review_path
+    ? check(await sb.from("videos").update({ review_path: null }).eq("id", video.id).select().single())
+    : check(await sb.from("videos").update({ clips: (video.clips || []).filter((c) => c.path !== path) }).eq("id", video.id).select().single());
+  await sb.storage.from(BUCKET).remove([path]);
+  return row;
+}
+
 export const setLibrary = (id, patch) => sb.from("videos").update(patch).eq("id", id).select().single().then(check);
 
 export const reviewVideo = (id, verdict, feedback) =>
@@ -146,9 +167,11 @@ export const reviewVideo = (id, verdict, feedback) =>
 // except ones saved to an athlete's library. Written feedback stays.
 export async function cleanupVideos(videos, days = 30) {
   const cutoff = Date.now() - days * 864e5;
-  const old = videos.filter((v) => v.status === "reviewed" && !v.keep && (v.storage_path || v.review_path) && new Date(v.reviewed_at).getTime() < cutoff);
+  const files = (v) => [v.storage_path, v.review_path, ...(v.clips || []).map((c) => c.path)].filter(Boolean);
+  const old = videos.filter((v) => v.status === "reviewed" && !v.keep && files(v).length && new Date(v.reviewed_at).getTime() < cutoff);
   if (!old.length) return 0;
-  check(await sb.storage.from(BUCKET).remove(old.flatMap((v) => [v.storage_path, v.review_path].filter(Boolean))));
-  check(await sb.from("videos").update({ storage_path: null, review_path: null }).in("id", old.map((v) => v.id)));
+  check(await sb.storage.from(BUCKET).remove(old.flatMap(files)));
+  const cleared = { storage_path: null, review_path: null, ...(old.some((v) => "clips" in v) ? { clips: [] } : {}) };
+  check(await sb.from("videos").update(cleared).in("id", old.map((v) => v.id)));
   return old.length;
 }

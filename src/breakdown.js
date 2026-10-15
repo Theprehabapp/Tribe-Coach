@@ -21,7 +21,8 @@ export const canRecord = () =>
 const even = (n) => Math.max(2, Math.round(n / 2) * 2);
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxBytes = 50 * 1048576, onSave }) {
+// multi: each saved recording is one labelled point, and the coach can record another straight after.
+export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxBytes = 50 * 1048576, multi = false, nextLabel = () => "", onSave }) {
   root.innerHTML = `
     <div class="bd-stage"><canvas class="bd-canvas" aria-label="Video with drawings. Drag to draw."></canvas></div>
     <div class="bd-bar">
@@ -213,7 +214,9 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
     if (!canRecord()) { recEl.innerHTML = '<p class="small muted">This browser can\'t record a breakdown. Use Safari or Chrome on an up-to-date phone or computer.</p>'; return; }
     if (st.rec) { recEl.innerHTML = `<div class="row"><button class="btn rec on" data-bd="stop"><span class="recdot"></span>Stop recording</button><span class="small muted">Talk them through it. Recording stops by itself at ${fmt(maxSeconds)}.</span></div>`; return; }
     if (st.saved && !st.result) {
-      recEl.innerHTML = '<div class="row"><span class="chip green">Breakdown saved</span><button class="btn small ghost" data-bd="retake">Record a new one</button></div>';
+      recEl.innerHTML = multi
+        ? '<div class="row"><span class="chip green">Saved</span><button class="btn rec" data-bd="record"><span class="recdot"></span>Record another point</button></div><p class="small" data-bd-msg role="status"></p>'
+        : '<div class="row"><span class="chip green">Breakdown saved</span><button class="btn small ghost" data-bd="retake">Record a new one</button></div>';
       return;
     }
     if (st.result) {
@@ -221,7 +224,8 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
       recEl.innerHTML = `<div class="stack"><div class="section-head"><h3>Your breakdown</h3><span class="small muted num">${mb.toFixed(1)} MB</span></div>
         <video class="bd-preview" controls playsinline src="${st.resultUrl}"></video>
         ${st.result.size > maxBytes ? `<p class="small" style="color:var(--red)">Too big to save (over ${Math.round(maxBytes / 1048576)} MB). Record a shorter one.</p>` : ""}
-        <div class="row"><button class="btn primary" data-bd="save"${st.result.size > maxBytes ? " disabled" : ""}>Save for client</button><button class="btn ghost" data-bd="retake">Record again</button></div>
+        ${multi ? `<label class="f">What's this point about?<input class="t" data-bd-label maxlength="60" placeholder="e.g. Bar path off the floor"></label>` : ""}
+        <div class="row"><button class="btn primary" data-bd="save"${st.result.size > maxBytes ? " disabled" : ""}>${multi ? "Save this point" : "Save for client"}</button><button class="btn ghost" data-bd="retake">Record again</button></div>
         <p class="small" data-bd-msg role="status"></p></div>`;
       return;
     }
@@ -284,7 +288,8 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
       case "save": {
         const m = recEl.querySelector("[data-bd-msg]");
         b.disabled = true; m.textContent = "Saving...";
-        try { await onSave(st.result); dropResult(); st.saved = true; recUI(); }
+        const name = recEl.querySelector("[data-bd-label]")?.value.trim() || nextLabel();
+        try { await onSave(st.result, name); dropResult(); st.saved = true; recUI(); }
         catch (e) { m.textContent = `Didn't save: ${e.message || e}. Check your connection and try again.`; b.disabled = false; }
         break;
       }
