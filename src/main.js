@@ -6,7 +6,7 @@ import { prepareVideo, checkVideo, warmUp } from "./upload.js";
 import * as notify from "./notify.js";
 import {
   FEEDBACK_HOURS, DOW_LONG, W1_LINE, ymd, fmtDay, fmtLong, fmtTime,
-  dueAt, timeLeft, weekOf, sessionDate, rxLine, bumpTarget,
+  dueAt, timeLeft, weekOf, sessionDate, rxLine, bumpTarget, blockLabels, exKey, hasPct, pctLoad,
 } from "./schedule.js";
 
 const STREAMS = ["Tribe Build", "Hypertrophy X", "TribeFit", "Aerobic Conditioning", "HYROX"];
@@ -14,7 +14,7 @@ const app = document.getElementById("app");
 const tabsEl = document.getElementById("tabs");
 
 // All data the signed-in person may see, loaded once and kept in sync as they act.
-let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false };
+let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false };
 let me = null; // signed-in profile
 let ui = { tab: null, view: null, programId: null, week: 0, clientId: null, logKey: null, drafts: {}, file: null, busy: false };
 
@@ -28,6 +28,10 @@ const today = () => ymd(new Date());
 const findLog = (cid, pid, w, dayId) => D.logs.find((l) => l.client_id === cid && l.program_id === pid && l.week === w && l.day_id === dayId);
 const waiting = () => D.videos.filter((v) => v.status === "waiting");
 const newId = () => crypto.randomUUID().slice(0, 8);
+// Exercise library entry and an athlete's 1RM for an exercise name, matched loosely.
+const libFor = (name) => D.exercises.find((x) => exKey(x.name) === exKey(name));
+const maxFor = (cid, name) => D.maxes.find((m) => m.client_id === cid && exKey(m.exercise) === exKey(name));
+const nextBlock = (exs) => { const last = exs.map((e) => String(e.block || "").trim().toUpperCase()).filter(Boolean).pop(); return last ? String.fromCharCode(Math.min(90, last.charCodeAt(0) + 1)) : "A"; };
 // Breakdown clips on a video, oldest first: one from before labels (review_path), then the labelled ones.
 const clipsOf = (v) => [...(v.review_path ? [{ path: v.review_path, label: "Breakdown" }] : []), ...(v.clips || [])];
 const unread = (cid) => D.messages.filter((m) => m.client_id === cid && m.sender_id !== me.id && !m.read_at).length;
@@ -148,6 +152,7 @@ function render() {
   if (ui.view === "program") html = vProgramEdit();
   else if (ui.view === "client") html = vClientDetail();
   else if (ui.view === "log") html = vLog();
+  else if (ui.view === "exlib") html = vExLib();
   else if (ui.view === "password") html = vSetPassword(false);
   else if (ui.view === "review") html = vReview();
   else if (isCoach()) html = ui.tab === "queue" ? vQueue() : ui.tab === "programs" ? vPrograms() : vClients();
@@ -363,7 +368,7 @@ async function addRef(file) {
 /* ----- coach: programs ----- */
 function vPrograms() {
   let out = `<section class="hero"><div class="kicker">Library</div><h1>Programs</h1><p class="muted small">Build a block once, then assign it to any client. Prescriptions follow your notation: sets x reps @ target (cue).</p></section>
-    <div class="row"><button class="btn primary" data-act="new-program">New program</button>${D.programs.length ? "" : '<button class="btn" data-act="example-program">Start from an example block</button>'}</div><div class="list">`;
+    <div class="row"><button class="btn primary" data-act="new-program">New program</button>${D.programs.length ? "" : '<button class="btn" data-act="example-program">Start from an example block</button>'}${D.progReady ? `<button class="btn" data-act="open-exlib">Exercise library (${D.exercises.length})</button>` : ""}</div><div class="list">`;
   for (const p of D.programs) {
     const n = clients().filter((c) => c.program_id === p.id).length;
     const sessions = p.weeks.reduce((a, w) => a + w.days.length, 0);
@@ -390,23 +395,26 @@ function vProgramEdit() {
       <label class="f">Session<input class="t" list="streams" id="d-name-${day.id}" data-input="d-name" data-d="${di}" value="${esc(day.name)}"></label>
       <label class="f">Day<select class="t" id="d-dow-${day.id}" data-change="d-dow" data-d="${di}">${[1, 2, 3, 4, 5, 6, 0].map((n) => `<option value="${n}"${day.dow === n ? " selected" : ""}>${DOW_LONG[n]}</option>`).join("")}</select></label></div>
       <label class="f">Coach instructions<textarea class="t" id="d-note-${day.id}" data-input="d-note" data-d="${di}" placeholder="Framing for the session. Optional.">${esc(day.coachNote)}</textarea></label>`;
+    const labels = blockLabels(day.exercises);
     day.exercises.forEach((e, ei) => {
-      out += `<div class="stack exblock"><div class="row spread"><span class="rx" id="rx-${e.id}">${esc(rxLine(e))}</span><span class="row">
+      out += `<div class="stack exblock"><div class="row spread"><span class="rx"><span class="blk" id="blk-${e.id}">${labels[ei] || ""}</span> <span id="rx-${e.id}">${esc(rxLine(e))}</span></span><span class="row">
         <button class="btn small ghost" data-act="ex-up" data-d="${di}" data-e="${ei}"${ei ? "" : " disabled"}>Up</button>
         <button class="btn small danger" data-act="ex-del" data-d="${di}" data-e="${ei}">Remove</button></span></div>
         <div class="grid-ex">${fld("Exercise", "name", e, di, ei, "wide")}${fld("Sets", "sets", e, di, ei, "", "number")}${fld("Reps", "reps", e, di, ei, "", "text", "8 or 10.10")}${fld("Load target", "target", e, di, ei, "", "text", "7 RPE or 70-75% of 1RM")}</div>
-        <div class="grid2">${fld("Cue (in brackets)", "cue", e, di, ei)}${fld("Rest", "rest", e, di, ei, "", "text", "Rest 3-4 minutes between sets")}</div>
+        <div class="grid-cue">${fld("Block", "block", e, di, ei, "", "text", "A")}${fld("Cue (in brackets)", "cue", e, di, ei)}${fld("Rest", "rest", e, di, ei, "", "text", "Rest 3-4 minutes between sets")}</div>
         ${fld("Instruction note", "note", e, di, ei, "", "text", "Increase load by 2.5-5kg from last week.")}</div>`;
     });
     out += `<div class="row spread"><button class="btn small" data-act="ex-add" data-d="${di}">Add exercise</button><button class="btn small danger" data-act="day-del" data-d="${di}">Delete session</button></div></section>`;
   }
-  out += `<datalist id="streams">${STREAMS.map((s) => `<option value="${s}">`).join("")}</datalist>
+  out += `<p class="small muted">Block: give exercises the same letter to superset them (A1, A2). Exercise names come from your exercise library.</p>
+    <datalist id="streams">${STREAMS.map((s) => `<option value="${s}">`).join("")}</datalist>
+    <datalist id="ex-lib">${D.exercises.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist>
     <div class="row"><button class="btn" data-act="day-add">Add session to W${ui.week + 1}</button></div>
     <div class="row">${ui.confirmDelProgram ? '<span>Delete this program? Clients on it lose their sessions.</span><button class="btn small primary" data-act="del-program-yes">Delete</button><button class="btn small" data-act="del-program-no">Keep it</button>' : '<button class="btn small danger" data-act="del-program">Delete program</button>'}</div>`;
   return out;
 }
 function fld(label, key, e, di, ei, cls = "", type = "text", ph = "") {
-  return `<label class="f ${cls}">${label}<input class="t" id="x-${key}-${e.id}" type="${type}"${type === "number" ? ' min="1" inputmode="numeric"' : ""} data-input="ex" data-k="${key}" data-d="${di}" data-e="${ei}" value="${esc(e[key])}"${ph ? ` placeholder="${esc(ph)}"` : ""}></label>`;
+  return `<label class="f ${cls}">${label}<input class="t" id="x-${key}-${e.id}" type="${type}"${key === "name" ? ' list="ex-lib" autocomplete="off"' : key === "block" ? ' maxlength="2" autocapitalize="characters"' : ""}${type === "number" ? ' min="1" inputmode="numeric"' : ""} data-input="ex" data-k="${key}" data-d="${di}" data-e="${ei}" value="${esc(e[key])}"${ph ? ` placeholder="${esc(ph)}"` : ""}></label>`;
 }
 function saveProgramSoon() {
   const p = program(ui.programId); if (!p) return;
@@ -447,7 +455,7 @@ function vClientDetail() {
     <label class="f">Goal<input class="t" id="c-goal" data-input="c-goal" value="${esc(c.goal)}"></label>
     <div class="grid2"><label class="f">Program<select class="t" id="c-prog" data-change="c-prog"><option value="">None</option>${D.programs.map((p) => `<option value="${p.id}"${c.program_id === p.id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
     <label class="f">Start date<input class="t" type="date" id="c-start" data-change="c-start" value="${esc(c.start_date || "")}"></label></div>
-    <p class="muted small">Start on a Monday so week numbers line up with the calendar.</p></section>`;
+    <p class="muted small">Start on a Monday so week numbers line up with the calendar.</p></section>${maxesBox(c.id)}`;
   const logs = D.logs.filter((l) => l.client_id === c.id);
   out += `<section class="stack"><div class="section-head"><h2>Logged sessions</h2><span class="muted small num">${logs.length}</span></div>${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Nothing logged yet.</div>'}</section>`;
   out += `<div class="row">${ui.confirmRevoke === c.id
@@ -623,17 +631,89 @@ function saveLogSoon(l, now) {
   if (now) { clearTimeout(timers["log"]); return go(); }
   debounce("log", go);
 }
+// "Your 1RM is 120 kg, so 85-90 kg today", or a box to add the 1RM when the target is a percentage.
+function loadLine(cid, e) {
+  if (!D.progReady || !hasPct(e.target)) return "";
+  const m = maxFor(cid, e.name);
+  if (m) return `<p class="small load">${esc(pctLoad(e.target, +m.kg))} today <span class="muted">(1RM ${+m.kg} kg)</span></p>`;
+  return `<div class="row max-add"><input class="t num" id="max-${e.id}" inputmode="decimal" placeholder="1RM kg" aria-label="${esc(e.name)} 1RM in kg">
+    <button class="btn small" data-act="max-save" data-cid="${cid}" data-ex="${esc(e.name)}" data-in="max-${e.id}">Add 1RM</button><span class="small muted">to see this in kg</span></div>`;
+}
+function demoBit(name) {
+  const x = D.progReady && libFor(name);
+  if (!x || !(x.demo_url || x.demo_path || x.cues)) return "";
+  return `<div class="demo">${x.demo_path ? `<button class="link small" data-act="demo" data-path="${esc(x.demo_path)}">Watch demo</button>` : ""}${x.demo_url ? `<a class="link small" href="${esc(x.demo_url)}" target="_blank" rel="noopener">Watch demo</a>` : ""}
+    ${x.cues ? `<p class="ins">${esc(x.cues)}</p>` : ""}<div class="demo-vid"></div></div>`;
+}
+// 1RMs for one athlete, editable by the coach and by the athlete. Suggests the % lifts in their program.
+function maxesBox(cid) {
+  if (!D.progReady) return "";
+  const mine = D.maxes.filter((m) => m.client_id === cid), p = program(profile(cid)?.program_id);
+  const pctNames = [...new Set((p?.weeks || []).flatMap((w) => w.days.flatMap((d) => d.exercises.filter((e) => hasPct(e.target)).map((e) => e.name))).filter(Boolean))];
+  const missing = pctNames.filter((n) => !maxFor(cid, n));
+  return `<section class="stack"><div class="section-head"><h2>1RMs</h2><span class="muted small">Percentages in the program show as kg from these.</span></div>
+    ${mine.length ? `<div class="list">${mine.map((m) => `<div class="item static row spread"><span><strong>${esc(m.exercise)}</strong> <span class="small muted">${fmtDay(m.tested_on)}</span></span>
+      <span class="row"><input class="t num kg" inputmode="decimal" aria-label="${esc(m.exercise)} 1RM in kg" data-change="max-kg" data-cid="${cid}" data-ex="${esc(m.exercise)}" value="${+m.kg}"><span class="small">kg</span>
+      <button class="btn small ghost" data-act="max-del" data-cid="${cid}" data-ex="${esc(m.exercise)}">Remove</button></span></div>`).join("")}</div>` : '<p class="small muted">None yet.</p>'}
+    ${missing.length ? `<p class="small muted">Missing for this program: ${missing.map(esc).join(", ")}</p>` : ""}
+    <div class="row"><input class="t" id="max-new-ex-${cid}" list="max-names-${cid}" maxlength="80" placeholder="Exercise, e.g. Back Squat" aria-label="Exercise">
+      <input class="t num kg" id="max-new-kg-${cid}" inputmode="decimal" placeholder="kg" aria-label="1RM in kg">
+      <button class="btn small" data-act="max-save" data-cid="${cid}" data-in="max-new-kg-${cid}" data-exin="max-new-ex-${cid}">Add</button></div>
+    <datalist id="max-names-${cid}">${[...missing, ...D.exercises.map((x) => x.name)].map((n) => `<option value="${esc(n)}">`).join("")}</datalist></section>`;
+}
+async function saveMax(cid, ex, kg) {
+  const rows = await api.setMax(cid, ex, kg);
+  D.maxes = [...D.maxes.filter((m) => m.client_id !== cid), ...rows];
+}
+
+/* ----- coach: exercise library ----- */
+function vExLib() {
+  return `<div class="row"><button class="link" data-act="back">Back to programs</button></div>
+    <section class="hero"><div class="kicker">Library</div><h1>Exercises</h1><p class="muted small">Add a demo for an exercise once and every athlete sees a Watch demo button wherever it's programmed. Names match what you type in programs.</p></section>
+    <section class="card stack"><h3>Add an exercise</h3>
+      <label class="f">Name<input class="t" id="xl-name" maxlength="80" placeholder="e.g. Bulgarian Split Squat"></label>
+      <label class="f">Demo link (optional)<input class="t" id="xl-url" type="url" placeholder="https://youtube.com/..."></label>
+      <div class="row"><label class="btn small" for="xl-file">Or upload a demo video</label><input id="xl-file" type="file" accept="video/*" hidden><span class="small muted" id="xl-file-name"></span></div>
+      <label class="f">Cues (optional)<textarea class="t" id="xl-cues" placeholder="Front foot flat, knee tracks over toes."></textarea></label>
+      <div class="row"><button class="btn primary" data-act="exlib-add">Add exercise</button><span class="small" id="xl-msg" role="status"></span></div></section>
+    ${D.exercises.length ? `<div class="list">${D.exercises.map((x) => `<div class="item static stack">
+      <div class="row spread"><strong>${esc(x.name)}</strong><span class="row">${x.demo_path ? `<button class="btn small ghost" data-act="demo" data-path="${esc(x.demo_path)}">Watch</button>` : ""}${x.demo_url ? `<a class="btn small ghost" href="${esc(x.demo_url)}" target="_blank" rel="noopener">Open link</a>` : ""}<button class="btn small danger" data-act="exlib-del" data-id="${x.id}">Delete</button></span></div>
+      <label class="f">Demo link<input class="t" type="url" data-change="exlib-field" data-k="demo_url" data-id="${x.id}" value="${esc(x.demo_url)}" placeholder="https://..."></label>
+      <label class="f">Cues<textarea class="t" data-change="exlib-field" data-k="cues" data-id="${x.id}">${esc(x.cues)}</textarea></label>
+      <div class="demo-vid"></div></div>`).join("")}</div>` : '<div class="empty">No exercises yet.</div>'}`;
+}
+async function addExercise() {
+  const name = document.getElementById("xl-name").value.trim(), url = document.getElementById("xl-url").value.trim();
+  const cues = document.getElementById("xl-cues").value.trim(), file = ui.demoFile, msg = document.getElementById("xl-msg");
+  if (!name) { msg.textContent = "Give it a name first."; return; }
+  if (url && !/^https:\/\//i.test(url)) { msg.textContent = "The link needs to start with https://"; return; }
+  if (libFor(name)) { msg.textContent = `${name} is already in the library. Edit it below.`; return; }
+  let demo_path = null;
+  try {
+    if (file) { const f = await prepareVideo(file, (t) => (msg.textContent = t)); msg.textContent = "Uploading..."; demo_path = await api.uploadDemo(me.id, f, name); }
+    const row = await api.saveExercise({ name, demo_url: url, demo_path, cues });
+    D.exercises = [...D.exercises, row].sort((a, b) => a.name.localeCompare(b.name));
+    ui.demoFile = null; render(); toast(`${name} added.`);
+  } catch (e) {
+    if (demo_path) api.removeFile(demo_path).catch(() => {});
+    msg.textContent = `Didn't save: ${e.message || e}`;
+  }
+}
+
 function vLog() {
   const r = logFor(ui.logKey);
   if (!r) { ui.view = null; return vToday(); }
   const { l, day } = r;
   let out = `<div class="row"><button class="link" data-act="back">Back</button></div><section class="hero"><div class="kicker">Week ${ui.logKey.w + 1}, ${fmtLong(l.date)}</div><h1>${esc(day.name)}</h1>
     ${day.coachNote ? `<div class="feedback"><span class="kicker">From your coach</span><p class="small">${esc(day.coachNote)}</p></div>` : ""}</section>`;
+  const labels = blockLabels(day.exercises);
   day.exercises.forEach((e, ei) => {
     const en = l.entries.find((x) => x.exId === e.id) || (l.entries[ei] = { exId: e.id, sets: [{ reps: "", kg: "", rpe: "", done: false }] });
     const ins = [e.note, e.rest].filter(Boolean).join("\n");
-    out += `<section class="card"><div class="row spread"><h3>${esc(e.name)}</h3><button class="link small" data-act="film" data-ex="${esc(e.name)}">Film a set</button></div>
-      <p class="rx">${esc(rxLine(e))}</p>${ins ? `<p class="ins">${esc(ins)}</p>` : ""}
+    const lb = labels[ei], mates = lb && /\d$/.test(lb) ? labels.filter((x) => x && x[0] === lb[0]) : [];
+    out += `<section class="card${mates.length ? " superset" : ""}"><div class="row spread"><h3>${lb ? `<span class="blk">${lb}</span> ` : ""}${esc(e.name)}</h3><button class="link small" data-act="film" data-ex="${esc(e.name)}">Film a set</button></div>
+      ${mates.length && lb.endsWith("1") ? `<p class="small muted">Superset: do ${mates.join(" and ")} back to back, then rest.</p>` : ""}
+      <p class="rx">${esc(rxLine(e))}</p>${loadLine(me.id, e)}${ins ? `<p class="ins">${esc(ins)}</p>` : ""}${demoBit(e.name)}
       <div class="colhead"><span>Set</span><span>Reps</span><span>kg</span><span>RPE</span><span></span></div>
       ${en.sets.map((s, si) => `<div class="setrow"><span class="n num">${si + 1}</span>${["reps", "kg", "rpe"].map((f) =>
         `<input class="t num" id="s-${e.id}-${si}-${f}" inputmode="decimal" aria-label="Set ${si + 1} ${f}" data-input="set" data-ex="${e.id}" data-s="${si}" data-f="${f}" value="${esc(s[f])}" placeholder="${f === "reps" ? esc(e.reps) : f === "rpe" ? "7" : ""}">`).join("")}
@@ -666,7 +746,7 @@ function vClientVideos() {
 }
 function vHistory() {
   const logs = D.logs.filter((l) => l.client_id === me.id);
-  return `<section class="hero"><div class="kicker">Training log</div><h1>What you've done</h1></section>${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Log a session from the Training tab and it shows up here.</div>'}`;
+  return `<section class="hero"><div class="kicker">Training log</div><h1>What you've done</h1></section>${maxesBox(me.id)}${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Log a session from the Training tab and it shows up here.</div>'}`;
 }
 
 /* ---------- events ---------- */
@@ -790,6 +870,32 @@ document.addEventListener("click", async (ev) => {
       catch (err) { fail(err, "Delete"); }
       break;
     }
+    case "open-exlib": go(() => { ui.view = "exlib"; }); scrollTo(0, 0); break;
+    case "exlib-add": b.disabled = true; await addExercise(); b.disabled = false; break;
+    case "exlib-del": {
+      const x = D.exercises.find((y) => y.id === id);
+      if (!x || !confirm(`Delete ${x.name} from the library?`)) return;
+      try { await api.deleteExercise(x); D.exercises = D.exercises.filter((y) => y.id !== id); render(); } catch (err) { fail(err, "Delete"); }
+      break;
+    }
+    case "demo": {
+      const box = b.closest(".demo, .item")?.querySelector(".demo-vid");
+      if (box) { box.innerHTML = box.innerHTML ? "" : `<div class="vid wide" data-video="${esc(b.dataset.path)}">Loading demo</div>`; hydrateVideos(); }
+      break;
+    }
+    case "max-save": {
+      const kg = parseFloat((document.getElementById(b.dataset.in)?.value || "").replace(",", "."));
+      const ex = b.dataset.exin ? document.getElementById(b.dataset.exin)?.value.trim() : b.dataset.ex;
+      if (!ex) return toast("Type the exercise first.");
+      if (!(kg > 0 && kg < 1000)) return toast("Enter the 1RM in kg, e.g. 120.");
+      b.disabled = true;
+      try { await saveMax(b.dataset.cid, ex, kg); render(); toast(`${ex} 1RM saved: ${kg} kg.`); } catch (err) { fail(err, "1RM"); b.disabled = false; }
+      break;
+    }
+    case "max-del":
+      if (!confirm(`Remove the ${b.dataset.ex} 1RM?`)) return;
+      try { await saveMax(b.dataset.cid, b.dataset.ex, null); render(); } catch (err) { fail(err, "1RM"); }
+      break;
     case "ref-del":
       if (!confirm("Delete this reference rep?")) return;
       try { await api.deleteRef(b.dataset.path); ui.refs = ui.refs.filter((r) => r.path !== b.dataset.path); paintCompare(); }
@@ -816,7 +922,7 @@ document.addEventListener("click", async (ev) => {
     case "del-week": progEdit(() => { p.weeks.splice(ui.week, 1); ui.week = Math.max(0, ui.week - 1); }); break;
     case "day-add": progEdit(() => wk.days.push({ id: newId(), name: "Tribe Build", dow: 1, coachNote: "", exercises: [] })); break;
     case "day-del": progEdit(() => wk.days.splice(d, 1)); break;
-    case "ex-add": progEdit(() => wk.days[d].exercises.push({ id: newId(), name: "", sets: 3, reps: "8", target: "7 RPE", cue: "", rest: "", note: ui.week === 0 ? W1_LINE : "" })); break;
+    case "ex-add": progEdit(() => wk.days[d].exercises.push({ id: newId(), block: nextBlock(wk.days[d].exercises), name: "", sets: 3, reps: "8", target: "7 RPE", cue: "", rest: "", note: ui.week === 0 ? W1_LINE : "" })); break;
     case "ex-del": progEdit(() => wk.days[d].exercises.splice(e, 1)); break;
     case "ex-up": progEdit(() => { const a = wk.days[d].exercises; [a[e - 1], a[e]] = [a[e], a[e - 1]]; }); break;
     case "del-program": go(() => (ui.confirmDelProgram = true)); break;
@@ -871,8 +977,9 @@ document.addEventListener("input", (ev) => {
     case "d-note": wk.days[d].coachNote = t.value; break;
     case "ex": {
       const x = wk.days[d].exercises[e], k = t.dataset.k;
-      x[k] = k === "sets" ? Math.max(1, +t.value || 1) : t.value;
+      x[k] = k === "sets" ? Math.max(1, +t.value || 1) : k === "block" ? t.value.trim().toUpperCase() : t.value;
       const rx = document.getElementById("rx-" + x.id); if (rx) rx.textContent = rxLine(x);
+      if (k === "block") blockLabels(wk.days[d].exercises).forEach((lb, i) => { const el = document.getElementById("blk-" + wk.days[d].exercises[i].id); if (el) el.textContent = lb; });
       break;
     }
     case "c-goal": { const c = profile(ui.clientId); c.goal = t.value; debounce("goal", () => api.updateProfile(c.id, { goal: c.goal }).catch((err) => fail(err, "Goal"))); return; }
@@ -885,6 +992,7 @@ document.addEventListener("input", (ev) => {
 document.addEventListener("change", async (ev) => {
   const t = ev.target;
   if (t.id === "vfile") { const f = t.files?.[0]; if (f) setFile(f); return; }
+  if (t.id === "xl-file") { const f = t.files?.[0]; t.value = ""; if (f) { const bad = checkVideo(f); if (bad) return toast(bad); ui.demoFile = f; warmUp(); document.getElementById("xl-file-name").textContent = f.name; } return; }
   if (t.id === "ref-file") { const f = t.files?.[0]; t.value = ""; if (f) { warmUp(); addRef(f); } return; }
   const a = t.dataset.change; if (!a) return;
   if (a === "d-dow") { program(ui.programId).weeks[ui.week].days[+t.dataset.d].dow = +t.value; render(); saveProgramSoon(); }
@@ -893,6 +1001,17 @@ document.addEventListener("change", async (ev) => {
     const theme = t.value.trim().slice(0, 40);
     try { const row = await api.setLibrary(t.dataset.id, theme ? { theme, keep: true } : { theme }); D.videos = D.videos.map((y) => (y.id === row.id ? row : y)); render(); }
     catch (err) { fail(err, "Theme"); }
+  }
+  if (a === "exlib-field") {
+    const x = D.exercises.find((y) => y.id === t.dataset.id), k = t.dataset.k, val = t.value.trim();
+    if (!x) return;
+    if (k === "demo_url" && val && !/^https:\/\//i.test(val)) return toast("The link needs to start with https://");
+    try { const row = await api.saveExercise({ ...x, [k]: val }); D.exercises = D.exercises.map((y) => (y.id === row.id ? row : y)); toast("Saved."); } catch (err) { fail(err, "Exercise"); }
+  }
+  if (a === "max-kg") {
+    const kg = parseFloat(t.value.replace(",", "."));
+    if (!(kg > 0 && kg < 1000)) return toast("Enter the 1RM in kg, e.g. 120.");
+    try { await saveMax(t.dataset.cid, t.dataset.ex, kg); toast("1RM saved."); } catch (err) { fail(err, "1RM"); }
   }
   if (a === "c-start") await patchProfile(ui.clientId, { start_date: t.value || null }, "Start date saved.");
 });
