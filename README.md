@@ -103,6 +103,11 @@ A new chat message also sends a phone notification to the other person, if they'
 
 Run `supabase/migrations/0008_programming.sql` in the SQL Editor to switch on the library and 1RMs. Supersets work without it.
 
+- **Teams:** Clients, then **New team**. Give it a program and start date and tick the athletes in it. Everyone in the team trains that program from that date.
+- **An athlete's own program:** on an athlete's profile, pick an own program (it overrides their team's), **Copy** the program they're on just for them, or **Write a new program** for them. Their own copies stay out of the main Programs list and open from their profile.
+
+Run `supabase/migrations/0009_teams.sql` to switch on teams and per-athlete programs.
+
 ## Video size
 
 Videos are shrunk on the uploader's phone before they're sent: 720p, about 2.5 Mbps, a key frame every second, and the index at the front of the file so playback starts straight away. That's roughly 20 MB a minute instead of 100+ MB. It uses the browser's built-in encoder (WebCodecs, `src/shrink.js`); if a phone can't do it, the original is sent as before and the 50 MB limit applies.
