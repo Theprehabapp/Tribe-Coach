@@ -14,7 +14,7 @@ const app = document.getElementById("app");
 const tabsEl = document.getElementById("tabs");
 
 // All data the signed-in person may see, loaded once and kept in sync as they act.
-let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false };
+let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false, teams: [], teamsReady: false };
 let me = null; // signed-in profile
 let ui = { tab: null, view: null, programId: null, week: 0, clientId: null, logKey: null, drafts: {}, file: null, busy: false };
 
@@ -28,6 +28,15 @@ const today = () => ymd(new Date());
 const findLog = (cid, pid, w, dayId) => D.logs.find((l) => l.client_id === cid && l.program_id === pid && l.week === w && l.day_id === dayId);
 const waiting = () => D.videos.filter((v) => v.status === "waiting");
 const newId = () => crypto.randomUUID().slice(0, 8);
+// What an athlete trains: their own program first, otherwise their team's, each with its start date.
+const teamOf = (c) => D.teams.find((t) => t.id === c?.team_id);
+function planFor(c) {
+  if (c?.program_id && program(c.program_id)) return { p: program(c.program_id), start: c.start_date, team: null };
+  const t = teamOf(c);
+  if (t?.program_id && program(t.program_id)) return { p: program(t.program_id), start: t.start_date, team: t };
+  return { p: null, start: null, team: t || null };
+}
+const libraryPrograms = () => D.programs.filter((p) => !p.owner_id);
 // Exercise library entry and an athlete's 1RM for an exercise name, matched loosely.
 const libFor = (name) => D.exercises.find((x) => exKey(x.name) === exKey(name));
 const maxFor = (cid, name) => D.maxes.find((m) => m.client_id === cid && exKey(m.exercise) === exKey(name));
@@ -153,6 +162,7 @@ function render() {
   else if (ui.view === "client") html = vClientDetail();
   else if (ui.view === "log") html = vLog();
   else if (ui.view === "exlib") html = vExLib();
+  else if (ui.view === "team") html = vTeam();
   else if (ui.view === "password") html = vSetPassword(false);
   else if (ui.view === "review") html = vReview();
   else if (isCoach()) html = ui.tab === "queue" ? vQueue() : ui.tab === "programs" ? vPrograms() : vClients();
@@ -244,7 +254,7 @@ function vReview() {
   const v = D.videos.find((x) => x.id === ui.bdId), c = v && profile(v.client_id);
   if (!v?.storage_path) { ui.view = null; return vQueue(); }
   const list = queue(), at = list.findIndex((x) => x.id === v.id), left = timeLeft(dueAt(v.uploaded_at));
-  const p = program(c?.program_id), w = c ? weekOf(c.start_date, new Date()) : -1;
+  const { p, start } = planFor(c), w = weekOf(start, new Date());
   if (ui.lib) return `<div class="row"><button class="link" data-act="lib-back">Back to ${esc(c?.name || "client")}'s library</button></div>
     <section class="hero"><div class="kicker">${esc(c?.name || "Client")}, library</div><h1>${esc(v.exercise)}</h1>
     <div class="row">${v.status === "waiting" ? '<span class="chip">Waiting for review</span>' : verdictChip(v.verdict)}<span class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</span></div>
@@ -368,9 +378,9 @@ async function addRef(file) {
 /* ----- coach: programs ----- */
 function vPrograms() {
   let out = `<section class="hero"><div class="kicker">Library</div><h1>Programs</h1><p class="muted small">Build a block once, then assign it to any client. Prescriptions follow your notation: sets x reps @ target (cue).</p></section>
-    <div class="row"><button class="btn primary" data-act="new-program">New program</button>${D.programs.length ? "" : '<button class="btn" data-act="example-program">Start from an example block</button>'}${D.progReady ? `<button class="btn" data-act="open-exlib">Exercise library (${D.exercises.length})</button>` : ""}</div><div class="list">`;
-  for (const p of D.programs) {
-    const n = clients().filter((c) => c.program_id === p.id).length;
+    <div class="row"><button class="btn primary" data-act="new-program">New program</button>${libraryPrograms().length ? "" : '<button class="btn" data-act="example-program">Start from an example block</button>'}${D.progReady ? `<button class="btn" data-act="open-exlib">Exercise library (${D.exercises.length})</button>` : ""}</div><div class="list">`;
+  for (const p of libraryPrograms()) {
+    const n = clients().filter((c) => planFor(c).p?.id === p.id).length;
     const sessions = p.weeks.reduce((a, w) => a + w.days.length, 0);
     out += `<button class="item" data-act="open-program" data-id="${p.id}"><h3>${esc(p.name)}</h3><p class="small muted num">${p.weeks.length} weeks, ${sessions} sessions, ${n} client${n === 1 ? "" : "s"}</p>${p.note ? `<p class="small">${esc(p.note)}</p>` : ""}</button>`;
   }
@@ -383,7 +393,7 @@ function vProgramEdit() {
   ui.week = Math.min(ui.week, p.weeks.length - 1);
   const w = p.weeks[ui.week];
   let out = `<div class="row"><button class="link" data-act="back">Back to programs</button><span class="small muted" id="save-state"></span></div>
-    <section class="stack"><div class="kicker">Program</div>
+    <section class="stack"><div class="kicker">${p.owner_id ? `Program just for ${esc(profile(p.owner_id)?.name || "one athlete")}` : "Program"}</div>
     <label class="f">Name<input class="t" id="p-name" data-input="p-name" value="${esc(p.name)}"></label>
     <label class="f">Description<input class="t" id="p-note" data-input="p-note" value="${esc(p.note)}"></label></section>
     <div class="row spread"><div class="week-tabs" role="group" aria-label="Week">${p.weeks.map((_, i) => `<button data-act="week" data-v="${i}" aria-pressed="${i === ui.week}">W${i + 1}</button>`).join("")}</div>
@@ -422,6 +432,37 @@ function saveProgramSoon() {
   debounce("program", () => api.saveProgram(p).then(() => { const s2 = document.getElementById("save-state"); if (s2) s2.textContent = "Saved"; }).catch((e) => fail(e, "Program")));
 }
 
+/* ----- coach: teams and each athlete's program ----- */
+// Team, own program (overrides the team's) and start date, plus copying a program just for this athlete.
+function programBox(c) {
+  const own = D.programs.filter((p) => p.owner_id === c.id), team = teamOf(c), plan = planFor(c);
+  const opts = (sel) => `<option value="">${team?.program_id ? "None, follow the team" : "None"}</option>
+    ${own.length ? `<optgroup label="Just for ${esc(c.name || "them")}">${own.map((p) => `<option value="${p.id}"${sel === p.id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</optgroup>` : ""}
+    <optgroup label="Programs">${libraryPrograms().map((p) => `<option value="${p.id}"${sel === p.id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</optgroup>`;
+  return `${D.teamsReady ? `<label class="f">Team<select class="t" id="c-team" data-change="c-team"><option value="">No team</option>${D.teams.map((t) => `<option value="${t.id}"${c.team_id === t.id ? " selected" : ""}>${esc(t.name)}</option>`).join("")}</select></label>` : ""}
+    <div class="grid2"><label class="f">${team ? "Own program" : "Program"}<select class="t" id="c-prog" data-change="c-prog">${opts(c.program_id)}</select></label>
+    <label class="f">Start date<input class="t" type="date" id="c-start" data-change="c-start" value="${esc(c.start_date || "")}"></label></div>
+    <p class="muted small">${plan.team && !c.program_id ? `Following ${esc(plan.team.name)}${plan.p ? `: ${esc(plan.p.name)}` : ""}${plan.start ? ` from ${fmtDay(plan.start)}` : ""}. Pick an own program to override it.` : "Start on a Monday so week numbers line up with the calendar."}</p>
+    ${D.teamsReady ? `<div class="row">${plan.p ? `<button class="btn small" data-act="copy-for" data-id="${c.id}">Copy ${esc(plan.p.name)} just for ${esc(c.name || "them")}</button>` : ""}<button class="btn small ghost" data-act="new-for" data-id="${c.id}">Write a new program for ${esc(c.name || "them")}</button></div>
+    ${own.length ? `<div class="list">${own.map((p) => `<button class="item" data-act="open-program" data-id="${p.id}"><div class="row spread"><strong>${esc(p.name)}</strong><span class="small muted">Edit</span></div></button>`).join("")}</div>` : ""}` : ""}`;
+}
+function vTeam() {
+  const t = D.teams.find((x) => x.id === ui.teamId);
+  if (!t) { ui.view = null; return vClients(); }
+  const athletes = clients().filter((c) => c.approved);
+  return `<div class="row"><button class="link" data-act="back">Back to clients</button></div>
+    <section class="stack"><div class="kicker">Team</div>
+    <label class="f">Name<input class="t" id="t-name" maxlength="60" data-change="t-name" value="${esc(t.name)}"></label>
+    <div class="grid2"><label class="f">Program<select class="t" id="t-prog" data-change="t-prog"><option value="">None</option>${libraryPrograms().map((p) => `<option value="${p.id}"${t.program_id === p.id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
+    <label class="f">Start date<input class="t" type="date" id="t-start" data-change="t-start" value="${esc(t.start_date || "")}"></label></div>
+    <p class="muted small">Everyone in the team trains this program from this date, unless they have their own program.</p></section>
+    <section class="stack"><div class="section-head"><h2>Athletes</h2><span class="muted small num">${athletes.filter((c) => c.team_id === t.id).length}</span></div>
+    ${athletes.length ? `<div class="list">${athletes.map((c) => { const other = c.team_id && c.team_id !== t.id ? teamOf(c) : null;
+      return `<label class="item static row spread"><span><strong>${esc(c.name || c.email)}</strong>${other ? ` <span class="small muted">in ${esc(other.name)}</span>` : ""}${c.program_id ? ' <span class="small muted">has own program</span>' : ""}</span>
+        <input type="checkbox" data-change="t-member" data-id="${c.id}"${c.team_id === t.id ? " checked" : ""} aria-label="${esc(c.name || c.email)} in ${esc(t.name)}"></label>`; }).join("")}</div>` : '<div class="empty">No approved athletes yet.</div>'}</section>
+    <div class="row">${ui.confirmDelTeam ? `<span>Delete ${esc(t.name)}? Athletes stay, they just leave the team.</span><button class="btn small primary" data-act="team-del-yes">Delete</button><button class="btn small" data-act="team-del-no">Keep it</button>` : '<button class="btn small danger" data-act="team-del">Delete team</button>'}</div>`;
+}
+
 /* ----- coach: clients ----- */
 function vClients() {
   const pending = clients().filter((c) => !c.approved);
@@ -429,12 +470,17 @@ function vClients() {
     <p class="muted small">To add a client, send them this app's link. They create an account with their email and a password, then appear below for you to approve.</p></section>`;
   if (pending.length) out += `<section class="stack"><div class="section-head"><h2>Waiting for approval</h2></div><div class="list">${pending.map((c) =>
     `<div class="item static"><div class="row spread"><div><strong>${esc(c.name || "No name")}</strong><p class="small muted">${esc(c.email)}</p></div><button class="btn small primary" data-act="approve" data-id="${c.id}">Approve</button></div></div>`).join("")}</div></section>`;
+  if (D.teamsReady) out += `<section class="stack"><div class="section-head"><h2>Teams</h2><button class="btn small" data-act="team-new">New team</button></div>
+    ${D.teams.length ? `<div class="list">${D.teams.map((t) => { const n = clients().filter((c) => c.team_id === t.id).length, p = program(t.program_id);
+      return `<button class="item" data-act="open-team" data-id="${t.id}"><div class="row spread"><h3>${esc(t.name)}</h3><span class="chip num">${n} athlete${n === 1 ? "" : "s"}</span></div><p class="small muted">${p ? esc(p.name) : "No program"}${t.start_date ? `, from ${fmtDay(t.start_date)}` : ""}</p></button>`; }).join("")}</div>`
+      : '<p class="small muted">Put athletes on the same program in a team and assign the program once.</p>'}</section>
+    <div class="section-head"><h2>Athletes</h2></div>`;
   out += '<div class="list">';
   for (const c of clients().filter((c) => c.approved)) {
-    const p = program(c.program_id), w = weekOf(c.start_date, new Date()), wk = p && w >= 0 && p.weeks[w];
+    const { p, start } = planFor(c), team = teamOf(c), w = weekOf(start, new Date()), wk = p && w >= 0 && p.weeks[w];
     const logged = wk ? wk.days.filter((d) => findLog(c.id, p.id, w, d.id)?.done).length : 0;
     const vids = D.videos.filter((v) => v.client_id === c.id && v.status === "waiting").length;
-    const status = !p ? "No program assigned" : w < 0 ? `${esc(p.name)}, starts ${fmtDay(c.start_date)}` : w >= p.weeks.length ? `${esc(p.name)}, block finished` : `${esc(p.name)}, week ${w + 1} of ${p.weeks.length}`;
+    const status = (team ? `${esc(team.name)}: ` : "") + (!p ? "No program assigned" : !start ? `${esc(p.name)}, no start date` : w < 0 ? `${esc(p.name)}, starts ${fmtDay(start)}` : w >= p.weeks.length ? `${esc(p.name)}, block finished` : `${esc(p.name)}, week ${w + 1} of ${p.weeks.length}`);
     out += `<button class="item" data-act="open-client" data-id="${c.id}"><h3>${esc(c.name || c.email)}</h3><p class="small muted">${status}</p>
       <div class="row">${wk ? `<span class="chip num">${logged}/${wk.days.length} sessions this week</span>` : ""}${vids ? `<span class="chip accent num">${vids} video${vids > 1 ? "s" : ""} waiting</span>` : ""}${unread(c.id) ? `<span class="chip solid num">${unread(c.id)} new message${unread(c.id) > 1 ? "s" : ""}</span>` : ""}</div></button>`;
   }
@@ -453,9 +499,7 @@ function vClientDetail() {
   if (tab === "library") return out + vLibrary(c);
   out += `<section class="stack">
     <label class="f">Goal<input class="t" id="c-goal" data-input="c-goal" value="${esc(c.goal)}"></label>
-    <div class="grid2"><label class="f">Program<select class="t" id="c-prog" data-change="c-prog"><option value="">None</option>${D.programs.map((p) => `<option value="${p.id}"${c.program_id === p.id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
-    <label class="f">Start date<input class="t" type="date" id="c-start" data-change="c-start" value="${esc(c.start_date || "")}"></label></div>
-    <p class="muted small">Start on a Monday so week numbers line up with the calendar.</p></section>${maxesBox(c.id)}`;
+    ${programBox(c)}</section>${maxesBox(c.id)}`;
   const logs = D.logs.filter((l) => l.client_id === c.id);
   out += `<section class="stack"><div class="section-head"><h2>Logged sessions</h2><span class="muted small num">${logs.length}</span></div>${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Nothing logged yet.</div>'}</section>`;
   out += `<div class="row">${ui.confirmRevoke === c.id
@@ -595,17 +639,18 @@ function logSummary(l) {
 
 /* ----- client: training ----- */
 function vToday() {
-  const p = program(me.program_id);
+  const { p, start } = planFor(me);
   let out = `<section class="hero"><div class="kicker">Hey ${esc(me.name || "there")}</div>`;
   if (!p) return out + `<h1>No program yet</h1><p class="muted">Your coach hasn't assigned one. Check back soon.</p></section>`;
-  const w = weekOf(me.start_date, new Date());
-  if (w < 0) return out + `<h1>${esc(p.name)}</h1><p class="muted">Starts ${fmtLong(me.start_date)}.</p></section>`;
+  if (!start) return out + `<h1>${esc(p.name)}</h1><p class="muted">Your coach hasn't set a start date yet.</p></section>`;
+  const w = weekOf(start, new Date());
+  if (w < 0) return out + `<h1>${esc(p.name)}</h1><p class="muted">Starts ${fmtLong(start)}.</p></section>`;
   if (w >= p.weeks.length) return out + `<h1>Block done</h1><p class="muted">You've finished ${esc(p.name)}. Your coach will load the next one.</p></section>`;
-  const t = today(), days = [...p.weeks[w].days].sort((a, b) => sessionDate(me.start_date, w, a.dow) - sessionDate(me.start_date, w, b.dow));
-  const todays = days.find((d) => ymd(sessionDate(me.start_date, w, d.dow)) === t);
+  const t = today(), days = [...p.weeks[w].days].sort((a, b) => sessionDate(start, w, a.dow) - sessionDate(start, w, b.dow));
+  const todays = days.find((d) => ymd(sessionDate(start, w, d.dow)) === t);
   out += `<h1>${todays ? esc(todays.name) + " today" : `Week ${w + 1} of ${p.weeks.length}`}</h1><p class="muted small">${esc(p.name)}</p></section><div class="list">`;
   for (const d of days) {
-    const dt = ymd(sessionDate(me.start_date, w, d.dow)), l = findLog(me.id, p.id, w, d.id);
+    const dt = ymd(sessionDate(start, w, d.dow)), l = findLog(me.id, p.id, w, d.id);
     const state = l?.done ? '<span class="chip green">Logged</span>' : l ? '<span class="chip accent">In progress</span>' : dt < t ? '<span class="chip red">Missed</span>' : dt === t ? '<span class="chip solid">Today</span>' : `<span class="chip">${fmtDay(dt)}</span>`;
     out += `<button class="item" data-act="open-log" data-w="${w}" data-id="${d.id}"><div class="row spread"><h3>${esc(d.name)}</h3>${state}</div><p class="small muted">${fmtLong(dt)}, ${d.exercises.length} exercises</p></button>`;
   }
@@ -615,13 +660,13 @@ function vToday() {
   return out;
 }
 function logFor(k) {
-  const p = program(me.program_id), day = p?.weeks[k.w]?.days.find((d) => d.id === k.id);
+  const { p, start } = planFor(me), day = p?.weeks[k.w]?.days.find((d) => d.id === k.id);
   if (!day) return null;
   let l = findLog(me.id, p.id, k.w, day.id);
   if (!l) {
     // A draft stays out of D.logs until the client actually enters something.
     const dr = ui.draftLog;
-    l = dr && dr.week === k.w && dr.day_id === day.id ? dr : (ui.draftLog = { id: crypto.randomUUID(), client_id: me.id, program_id: p.id, week: k.w, day_id: day.id, date: ymd(sessionDate(me.start_date, k.w, day.dow)), done: false, note: "",
+    l = dr && dr.week === k.w && dr.day_id === day.id ? dr : (ui.draftLog = { id: crypto.randomUUID(), client_id: me.id, program_id: p.id, week: k.w, day_id: day.id, date: ymd(sessionDate(start, k.w, day.dow)), done: false, note: "",
       entries: day.exercises.map((e) => ({ exId: e.id, sets: Array.from({ length: +e.sets || 1 }, () => ({ reps: "", kg: "", rpe: "", done: false })) })) });
   }
   return { l, day };
@@ -653,7 +698,7 @@ function demoBit(name) {
 // 1RMs for one athlete, editable by the coach and by the athlete. Suggests the % lifts in their program.
 function maxesBox(cid) {
   if (!D.progReady) return "";
-  const mine = D.maxes.filter((m) => m.client_id === cid), p = program(profile(cid)?.program_id);
+  const mine = D.maxes.filter((m) => m.client_id === cid), p = planFor(profile(cid)).p;
   const pctNames = [...new Set((p?.weeks || []).flatMap((w) => w.days.flatMap((d) => d.exercises.filter((e) => hasPct(e.target)).map((e) => e.name))).filter(Boolean))];
   const missing = pctNames.filter((n) => !maxFor(cid, n));
   return `<section class="stack"><div class="section-head"><h2>1RMs</h2><span class="muted small">Percentages in the program show as kg from these.</span></div>
@@ -731,7 +776,7 @@ function vLog() {
 
 /* ----- client: videos ----- */
 function vClientVideos() {
-  const p = program(me.program_id);
+  const { p } = planFor(me);
   const names = [...new Set((p?.weeks || []).flatMap((w) => w.days.flatMap((d) => d.exercises.map((e) => e.name))).filter(Boolean))];
   let out = `<section class="hero"><div class="kicker">Technique videos</div><h1>Drop it here, not in my DMs</h1>
     <p class="muted">Upload whenever suits you. You'll get feedback right here within ${FEEDBACK_HOURS} hours.</p></section>
@@ -809,7 +854,8 @@ document.addEventListener("click", async (ev) => {
     case "back":
       if (bd?.unsaved && !confirm("Leave without saving this breakdown?")) return;
       if (act === "tab") { go(() => { ui.tab = v; ui.view = null; }); scrollTo(0, 0); break; }
-      go(() => { ui.view = null; ui.confirmRevoke = null; ui.confirmDelProgram = false; }); break;
+      if (ui.view === "program" && program(ui.programId)?.owner_id) { const cid = program(ui.programId).owner_id; go(() => { ui.view = "client"; ui.clientId = cid; ui.clientTab = "profile"; ui.confirmDelProgram = false; }); scrollTo(0, 0); break; }
+      go(() => { ui.view = null; ui.confirmRevoke = null; ui.confirmDelProgram = false; ui.confirmDelTeam = false; }); break;
     case "review": openReview(id); break;
     case "lib-open": openReview(id, true); break;
     case "lib-back":
@@ -875,6 +921,32 @@ document.addEventListener("click", async (ev) => {
       catch (err) { fail(err, "Delete"); }
       break;
     }
+    case "team-new":
+      try { const row = await api.createTeam({ name: `Team ${D.teams.length + 1}` }); D.teams.push(row); go(() => { ui.view = "team"; ui.teamId = row.id; }); scrollTo(0, 0); }
+      catch (err) { fail(err, "Team"); }
+      break;
+    case "open-team": go(() => { ui.view = "team"; ui.teamId = id; ui.confirmDelTeam = false; }); scrollTo(0, 0); break;
+    case "team-del": go(() => (ui.confirmDelTeam = true)); break;
+    case "team-del-no": go(() => (ui.confirmDelTeam = false)); break;
+    case "team-del-yes":
+      try { await api.deleteTeam(ui.teamId); D.teams = D.teams.filter((t) => t.id !== ui.teamId); D.profiles.forEach((c) => { if (c.team_id === ui.teamId) c.team_id = null; }); go(() => { ui.view = null; ui.confirmDelTeam = false; }); }
+      catch (err) { fail(err, "Delete"); }
+      break;
+    case "copy-for":
+    case "new-for": {
+      const c = profile(id), src = act === "copy-for" ? planFor(c).p : null, plan = planFor(c);
+      const base = src ? { name: `${src.name} (${c.name || c.email})`, note: src.note, weeks: structuredClone(src.weeks) }
+        : { name: `Program for ${c.name || c.email}`, note: "", weeks: [{ days: [{ id: newId(), name: "Tribe Build", dow: 1, coachNote: "", exercises: [] }] }] };
+      try {
+        const row = await api.createProgram({ ...base, owner_id: c.id });
+        D.programs.unshift(row);
+        const patch = { program_id: row.id, ...(!c.start_date && plan.start ? { start_date: plan.start } : {}) };
+        const prof = await api.updateProfile(c.id, patch); D.profiles = D.profiles.map((x) => (x.id === c.id ? prof : x));
+        toast(src ? `Copied. Changes here only affect ${c.name || "them"}.` : `New program for ${c.name || "them"}. Add sessions below.`);
+        go(() => { ui.programId = row.id; ui.week = 0; ui.view = "program"; }); scrollTo(0, 0);
+      } catch (err) { fail(err, "Program"); }
+      break;
+    }
     case "open-exlib": go(() => { ui.view = "exlib"; }); scrollTo(0, 0); break;
     case "exlib-add": b.disabled = true; await addExercise(); b.disabled = false; break;
     case "exlib-del": {
@@ -933,7 +1005,7 @@ document.addEventListener("click", async (ev) => {
     case "del-program": go(() => (ui.confirmDelProgram = true)); break;
     case "del-program-no": go(() => (ui.confirmDelProgram = false)); break;
     case "del-program-yes":
-      try { await api.deleteProgram(ui.programId); D.programs = D.programs.filter((x) => x.id !== ui.programId); D.profiles.forEach((c) => { if (c.program_id === ui.programId) c.program_id = null; }); go(() => { ui.view = null; ui.confirmDelProgram = false; }); }
+      try { await api.deleteProgram(ui.programId); D.programs = D.programs.filter((x) => x.id !== ui.programId); D.profiles.forEach((c) => { if (c.program_id === ui.programId) c.program_id = null; }); D.teams.forEach((t) => { if (t.program_id === ui.programId) t.program_id = null; }); go(() => { ui.view = null; ui.confirmDelProgram = false; }); }
       catch (err) { fail(err, "Delete"); }
       break;
     case "approve": await patchProfile(id, { approved: true }, "Approved."); break;
@@ -1017,6 +1089,14 @@ document.addEventListener("change", async (ev) => {
     const kg = parseFloat(t.value.replace(",", "."));
     if (!(kg > 0 && kg < 1000)) return toast("Enter the 1RM in kg, e.g. 120.");
     try { await saveMax(t.dataset.cid, t.dataset.ex, kg); toast("1RM saved."); } catch (err) { fail(err, "1RM"); }
+  }
+  if (a === "c-team") await patchProfile(ui.clientId, { team_id: t.value || null }, t.value ? "Added to team." : "Removed from team.");
+  if (a === "t-member") await patchProfile(t.dataset.id, { team_id: t.checked ? ui.teamId : null }, t.checked ? "Added to team." : "Removed from team.");
+  if (a === "t-name" || a === "t-prog" || a === "t-start") {
+    const k = { "t-name": "name", "t-prog": "program_id", "t-start": "start_date" }[a], val = t.value.trim() || null;
+    if (k === "name" && !val) return toast("Give the team a name.");
+    try { const row = await api.saveTeam(ui.teamId, { [k]: val }); D.teams = D.teams.map((x) => (x.id === row.id ? row : x)); render(); toast("Team saved."); }
+    catch (err) { fail(err, "Team"); }
   }
   if (a === "c-start") await patchProfile(ui.clientId, { start_date: t.value || null }, "Start date saved.");
 });

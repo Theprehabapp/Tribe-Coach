@@ -33,7 +33,7 @@ export async function myProfile(uid) {
 
 // RLS decides what comes back: the coach gets everyone, a client gets their own rows and assigned program.
 export async function loadAll() {
-  const [profiles, programs, logs, videos, messages, exercises, maxes] = await Promise.all([
+  const [profiles, programs, logs, videos, messages, exercises, maxes, teams] = await Promise.all([
     sb.from("profiles").select("*").order("created_at").then(check),
     sb.from("programs").select("*").order("created_at", { ascending: false }).then(check),
     sb.from("logs").select("*").order("date", { ascending: false }).then(check),
@@ -43,10 +43,13 @@ export async function loadAll() {
     // Exercise library and 1RMs arrived with migration 0008.
     sb.from("exercises").select("*").order("name").then(check).catch(() => null),
     sb.from("maxes").select("*").order("exercise").then(check).catch(() => null),
+    // Teams arrived with migration 0009.
+    sb.from("teams").select("*").order("name").then(check).catch(() => null),
   ]);
   // Labelled breakdown clips arrived with migration 0006; until it's run, one breakdown per video as before.
   return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages, clipsReady: videos.some((v) => "clips" in v),
-    exercises: exercises || [], maxes: maxes || [], progReady: !!exercises && !!maxes };
+    exercises: exercises || [], maxes: maxes || [], progReady: !!exercises && !!maxes,
+    teams: teams || [], teamsReady: !!teams };
 }
 
 /* ---------- profiles ---------- */
@@ -57,6 +60,11 @@ export const createProgram = (p) => sb.from("programs").insert(p).select().singl
 export const saveProgram = (p) =>
   sb.from("programs").update({ name: p.name, note: p.note, weeks: p.weeks, updated_at: new Date().toISOString() }).eq("id", p.id).then(check);
 export const deleteProgram = (id) => sb.from("programs").delete().eq("id", id).then(check);
+
+/* ---------- teams ---------- */
+export const createTeam = (t) => sb.from("teams").insert(t).select().single().then(check);
+export const saveTeam = (id, patch) => sb.from("teams").update(patch).eq("id", id).select().single().then(check);
+export const deleteTeam = (id) => sb.from("teams").delete().eq("id", id).then(check);
 
 /* ---------- logs ---------- */
 export const saveLog = (l) =>

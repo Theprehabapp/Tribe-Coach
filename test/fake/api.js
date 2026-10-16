@@ -6,7 +6,7 @@ const role = new URLSearchParams(location.search).get("as") || "coach";
 const coach = { id: "c", email: "coach@x", name: "Coach", role: "coach", approved: true, goal: "" };
 const amy = { id: "a", email: "amy@x", name: "Amy", role: "client", approved: true, goal: "", program_id: null, start_date: "2026-09-28" };
 const ben = { id: "b", email: "ben@x", name: "Ben", role: "client", approved: false, goal: "" };
-const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [] };
+const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [] };
 if (new URLSearchParams(location.search).get("seed")) {
   db.programs.push({ id: "p-seed", ...exampleProgram() }); amy.program_id = "p-seed";
   db.exercises.push({ id: "x1", name: "Back Squat", demo_url: "", demo_path: "c/demo-back-squat--1.webm", cues: "Brace, sit between your heels." });
@@ -16,6 +16,8 @@ if (new URLSearchParams(location.search).get("seed")) {
   db.messages.push({ id: "m-seed", client_id: "a", sender_id: "a", body: "Should I go lighter next week?", video_id: "v-old", clip_path: null, created_at: "2025-12-03T09:00:00Z", read_at: null });
   db.videos.push({ id: "v-seed", client_id: "a", exercise: "Back Squat", note: "Set 3, does my back round?", slot: "2026-01-01", status: "waiting", verdict: "", feedback: "", uploaded_at: "2026-01-01T09:00:00Z", storage_path: "a/x.webm", review_path: null, clips: [] });
 }
+// ?team=1: Amy follows the seeded program through a team instead of having it assigned directly.
+if (new URLSearchParams(location.search).get("team") && db.programs.length) { db.teams.push({ id: "t-seed", name: "Morning Crew", program_id: "p-seed", start_date: "2026-09-28" }); amy.program_id = null; amy.start_date = null; amy.team_id = "t-seed"; }
 const meRow = role === "coach" ? coach : amy;
 export const getSession = async () => (role === "none" ? null : { user: { id: meRow.id } });
 export const onAuth = () => {};
@@ -25,7 +27,7 @@ export const sendReset = async () => {};
 export const setPassword = async () => {};
 export const signOut = async () => {};
 export const myProfile = async () => meRow;
-export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips"), progReady: true });
+export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips"), progReady: true, teamsReady: true });
 const listeners = [];
 export const onMessage = (fn) => { listeners.push(fn); return () => {}; };
 window.__incoming = (body, video_id = null) => { const m = { id: "m" + Math.random(), client_id: "a", sender_id: role === "coach" ? "a" : "c", body, video_id, clip_path: null, created_at: new Date().toISOString(), read_at: null }; db.messages.push(m); listeners.forEach((f) => f(structuredClone(m))); };
@@ -61,3 +63,6 @@ export const deleteExercise = async (x) => { db.exercises = db.exercises.filter(
 export const uploadDemo = async (cid, file, name) => { window.__demo = file; return `${cid}/demo-${name}--1.webm`; };
 export const removeFile = async () => {};
 export const setMax = async (person, ex, kg) => { db.maxes = db.maxes.filter((m) => !(m.client_id === person && m.exercise.toLowerCase() === ex.toLowerCase())); if (kg != null) db.maxes.push({ client_id: person, exercise: ex, kg, tested_on: "2026-10-16" }); window.__max = { person, ex, kg }; return structuredClone(db.maxes.filter((m) => m.client_id === person)); };
+export const createTeam = async (t) => { const row = { id: "t" + db.teams.length, program_id: null, start_date: null, ...structuredClone(t) }; db.teams.push(row); return structuredClone(row); };
+export const saveTeam = async (id, patch) => { const row = db.teams.find((t) => t.id === id); Object.assign(row, patch); window.__team = structuredClone(row); return structuredClone(row); };
+export const deleteTeam = async (id) => { db.teams = db.teams.filter((t) => t.id !== id); };
