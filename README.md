@@ -82,6 +82,10 @@ Each athlete's **Library** lists all their videos grouped by movement or by your
 
 Run `supabase/migrations/0004_chat_and_library.sql` in the SQL Editor to switch these on. Until then the app works as before and the chat shows a note.
 
+## Feedback alerts
+
+When you send feedback on a video, the athlete gets an email ("Your Back Squat feedback is ready", with the verdict, your notes and how many breakdowns to watch) and, if they've turned notifications on, a phone notification. Both open their Videos tab. It's sent once per video, when it first goes from waiting to reviewed. Run `supabase/migrations/0007_feedback_alerts.sql` in the SQL Editor to switch it on; it uses the same Resend key as the other emails.
+
 ## Phone notifications
 
 A new chat message also sends a phone notification to the other person, if they've switched it on with **Turn on notifications** in the chat. Tapping the notification opens that chat.

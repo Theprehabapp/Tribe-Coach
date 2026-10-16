@@ -502,9 +502,14 @@ function pushNotice(who) {
   if (st === "blocked") return '<div class="card notice"><p class="small">Notifications are blocked for this app. Allow them in your phone\'s settings to get an alert for new messages.</p></div>';
   return "";
 }
-// Opens what a notification points at: "#chat" for an athlete, "#chat-<athlete id>" for the coach.
+// Opens what a notification or email points at: "#chat" or "#videos" for an athlete, "#chat-<athlete id>" for the coach.
 function openLink(hash) {
   if (bd || !me) return;
+  if (hash === "#videos" && !isCoach()) { // "your feedback is ready": show it, with the review just sent
+    go(() => { ui.tab = "videos"; ui.view = null; }); scrollTo(0, 0);
+    api.loadAll().then((d) => { D = d; if (ui.tab === "videos" && !ui.view) render(); }).catch(() => {});
+    return;
+  }
   const m = /^#chat(?:-(.+))?$/.exec(hash || "");
   if (!m) return;
   if (isCoach() && m[1] && profile(m[1])) go(() => { ui.tab = "clients"; ui.view = "client"; ui.clientId = m[1]; ui.clientTab = "chat"; });
