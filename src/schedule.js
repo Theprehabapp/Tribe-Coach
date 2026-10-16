@@ -47,3 +47,24 @@ export const W1_LINE = "- Establishing working loads this week to build on in th
 export function bumpTarget(target) {
   return target.replace(/(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)%/, (_, lo, hi) => `${+lo + 2.5}-${+hi + 2.5}%`);
 }
+
+// Supersets: exercises sharing a block letter, in order, become A1, A2; a block of one is just "A".
+export function blockLabels(exercises) {
+  const key = (e) => String(e.block || "").trim().toUpperCase();
+  const count = {}, seen = {};
+  exercises.forEach((e) => { const b = key(e); if (b) count[b] = (count[b] || 0) + 1; });
+  return exercises.map((e) => { const b = key(e); if (!b) return ""; seen[b] = (seen[b] || 0) + 1; return count[b] > 1 ? b + seen[b] : b; });
+}
+
+// Same exercise whatever the spacing or capitals.
+export const exKey = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+
+// A percentage target ("70-75% of 1RM", "80%") as kilograms off a 1RM, rounded to the nearest 2.5 kg.
+export const hasPct = (target) => /\d\s*%/.test(target || "");
+export function pctLoad(target, max) {
+  const m = /(\d+(?:\.\d+)?)(?:\s*-\s*(\d+(?:\.\d+)?))?\s*%/.exec(target || "");
+  if (!m || !(max > 0)) return null;
+  const kg = (p) => Math.round((max * p) / 100 / 2.5) * 2.5;
+  const lo = kg(+m[1]), hi = m[2] ? kg(+m[2]) : lo;
+  return lo === hi ? `${lo} kg` : `${lo}-${hi} kg`;
+}

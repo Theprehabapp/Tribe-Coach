@@ -33,16 +33,20 @@ export async function myProfile(uid) {
 
 // RLS decides what comes back: the coach gets everyone, a client gets their own rows and assigned program.
 export async function loadAll() {
-  const [profiles, programs, logs, videos, messages] = await Promise.all([
+  const [profiles, programs, logs, videos, messages, exercises, maxes] = await Promise.all([
     sb.from("profiles").select("*").order("created_at").then(check),
     sb.from("programs").select("*").order("created_at", { ascending: false }).then(check),
     sb.from("logs").select("*").order("date", { ascending: false }).then(check),
     sb.from("videos").select("*").order("uploaded_at", { ascending: false }).then(check),
     // Chat arrived with migration 0004. Until it's run, the rest of the app keeps working without it.
     sb.from("messages").select("*").order("created_at").then(check).catch(() => null),
+    // Exercise library and 1RMs arrived with migration 0008.
+    sb.from("exercises").select("*").order("name").then(check).catch(() => null),
+    sb.from("maxes").select("*").order("exercise").then(check).catch(() => null),
   ]);
   // Labelled breakdown clips arrived with migration 0006; until it's run, one breakdown per video as before.
-  return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages, clipsReady: videos.some((v) => "clips" in v) };
+  return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages, clipsReady: videos.some((v) => "clips" in v),
+    exercises: exercises || [], maxes: maxes || [], progReady: !!exercises && !!maxes };
 }
 
 /* ---------- profiles ---------- */
@@ -119,6 +123,30 @@ export async function uploadRef(coachId, file, label) {
   return { path, label: unslug(slug(label)) };
 }
 export const deleteRef = async (path) => check(await sb.storage.from(BUCKET).remove([path]));
+
+/* ---------- exercise library and 1RMs ---------- */
+export const saveExercise = (x) => (x.id
+  ? sb.from("exercises").update({ name: x.name, demo_url: x.demo_url, demo_path: x.demo_path, cues: x.cues }).eq("id", x.id)
+  : sb.from("exercises").insert({ name: x.name, demo_url: x.demo_url || "", demo_path: x.demo_path || null, cues: x.cues || "" })
+).select().single().then(check);
+export async function deleteExercise(x) {
+  check(await sb.from("exercises").delete().eq("id", x.id));
+  if (x.demo_path) await sb.storage.from(BUCKET).remove([x.demo_path]);
+}
+// Uploaded demos live in the coach's folder as demo-...; athletes may read only those files.
+export async function uploadDemo(coachId, file, name) {
+  const type = (file.type || "video/mp4").split(";")[0];
+  const ext = type === "video/webm" ? "webm" : type === "video/quicktime" ? "mov" : "mp4";
+  const path = `${coachId}/demo-${slug(name)}--${crypto.randomUUID().slice(0, 8)}.${ext}`;
+  check(await sb.storage.from(BUCKET).upload(path, file, { contentType: type, upsert: false }));
+  return path;
+}
+export const removeFile = (path) => sb.storage.from(BUCKET).remove([path]).then(check);
+// kg null removes it. Returns the athlete's 1RMs afterwards.
+export async function setMax(person, exercise, kg) {
+  check(await sb.rpc("set_max", { person, ex: exercise, max_kg: kg }));
+  return check(await sb.from("maxes").select("*").eq("client_id", person).order("exercise"));
+}
 
 /* ---------- chat ---------- */
 export const loadMessages = () => sb.from("messages").select("*").order("created_at").then(check);

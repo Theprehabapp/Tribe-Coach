@@ -95,6 +95,14 @@ A new chat message also sends a phone notification to the other person, if they'
 - iPhone (iOS 16.4 or later) only allows notifications for apps opened from the Home Screen: in Safari tap **Share**, **Add to Home Screen**, then open Tribe from the Home Screen icon. The app explains this when it's opened in Safari. Android and computers work straight from the browser.
 - Sending goes through this app's own `/api/push` endpoint (`worker/push.js`, Web Push with VAPID), so there's no extra service or key to sign up for.
 
+## Programming
+
+- **Supersets:** each exercise has a **Block** letter. Exercises sharing a letter are a superset and show as A1, A2 (a block of one is just "A"). New exercises get the next letter, so set the same letter to pair them.
+- **1RMs:** each athlete has a list of 1RMs (on their profile for you, under **Log** for them). A percentage target such as `70-75% of 1RM` then shows as kilograms in their session, rounded to 2.5 kg. If a lift has no 1RM yet, the session offers a box to add it.
+- **Exercise library:** Programs, then **Exercise library**. Add a demo as a link (YouTube, Instagram) or an uploaded video, plus cues. Athletes get a **Watch demo** button wherever that exercise is programmed. Names are matched ignoring capitals and spaces.
+
+Run `supabase/migrations/0008_programming.sql` in the SQL Editor to switch on the library and 1RMs. Supersets work without it.
+
 ## Video size
 
 Videos are shrunk on the uploader's phone before they're sent: 720p, about 2.5 Mbps, a key frame every second, and the index at the front of the file so playback starts straight away. That's roughly 20 MB a minute instead of 100+ MB. It uses the browser's built-in encoder (WebCodecs, `src/shrink.js`); if a phone can't do it, the original is sent as before and the 50 MB limit applies.

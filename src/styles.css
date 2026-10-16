@@ -173,3 +173,16 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--muted); }
 .lib-theme { flex: 1; min-width: 140px; }
 .notice { padding: 12px 14px; }
 .notice p { margin: 0; }
+
+/* programming: supersets, 1RM loads, exercise library */
+.grid-cue { display: grid; grid-template-columns: 64px 1fr 1fr; gap: 8px; }
+@media (max-width: 560px) { .grid-cue { grid-template-columns: 64px 1fr; } .grid-cue > :last-child { grid-column: 1 / -1; } }
+.blk { display: inline-block; min-width: 1.6em; font-weight: 800; letter-spacing: .02em; }
+.blk:empty { display: none; }
+.card.superset { border-left: 4px solid var(--fg); }
+.load { font-weight: 600; }
+.demo { display: grid; gap: 6px; justify-items: start; }
+.demo .vid { width: 100%; }
+.demo-vid:empty { display: none; }
+input.t.kg { width: 84px; }
+.max-add input.t { width: 96px; }
