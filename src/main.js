@@ -4,6 +4,7 @@ import { exampleProgram } from "./example.js";
 import { mountBreakdown } from "./breakdown.js";
 import { prepareVideo, checkVideo, warmUp } from "./upload.js";
 import * as notify from "./notify.js";
+import { liftSets, series, records, newPRs } from "./progress.js";
 import {
   FEEDBACK_HOURS, DOW_LONG, W1_LINE, ymd, fmtDay, fmtLong, fmtTime,
   dueAt, timeLeft, weekOf, sessionDate, rxLine, bumpTarget, blockLabels, exKey, hasPct, pctLoad,
@@ -554,7 +555,7 @@ function vClientDetail() {
   if (tab === "library") return out + vLibrary(c);
   out += `<section class="stack">
     <label class="f">Goal<input class="t" id="c-goal" data-input="c-goal" value="${esc(c.goal)}"></label>
-    ${programBox(c)}</section>${maxesBox(c.id)}`;
+    ${programBox(c)}</section>${maxesBox(c.id)}${progressBox(c.id)}`;
   const logs = D.logs.filter((l) => l.client_id === c.id);
   out += `<section class="stack"><div class="section-head"><h2>Logged sessions</h2><span class="muted small num">${logs.length}</span></div>${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Nothing logged yet.</div>'}</section>`;
   out += `<div class="row">${ui.confirmRevoke === c.id
@@ -684,13 +685,64 @@ async function sendChat(form) {
 }
 function logSummary(l) {
   const p = program(l.program_id), day = p?.weeks[l.week]?.days.find((d) => d.id === l.day_id);
+  const prs = l.done ? newPRs(l, clientLogs(l.client_id).filter((x) => x.date < l.date || (x.date === l.date && x.id < l.id)), nameOf) : [];
   const lines = (l.entries || []).map((en) => {
-    const e = day?.exercises.find((x) => x.id === en.exId); if (!e) return "";
+    const e = { name: day?.exercises.find((x) => x.id === en.exId)?.name || en.name }; if (!e.name) return "";
     const sets = en.sets.filter((s) => s.done || s.kg || s.reps); if (!sets.length) return "";
-    return `<div class="small"><strong>${esc(e.name)}</strong> <span class="muted num">${sets.map((s) => esc(s.reps || "-") + (s.kg ? ` x ${esc(s.kg)}kg` : "") + (s.rpe ? ` @${esc(s.rpe)}` : "")).join(", ")}</span></div>`;
+    const pr = prs.find((x) => exKey(x.name) === exKey(e.name));
+    return `<div class="small"><strong>${esc(e.name)}</strong>${pr ? ` <span class="chip solid" title="${pr.kind === "heaviest" ? "Heaviest yet" : "Best estimated 1RM yet"}">PR</span>` : ""} <span class="muted num">${sets.map((s) => esc(s.reps || "-") + (s.kg ? ` x ${esc(s.kg)}kg` : "") + (s.rpe ? ` @${esc(s.rpe)}` : "")).join(", ")}</span></div>`;
   }).join("");
   return `<div class="card"><div class="row spread"><strong>${esc(day ? day.name : "Session")}</strong><span class="muted small">W${l.week + 1}, ${fmtDay(l.date)}${l.done ? "" : ", in progress"}</span></div>${lines}${l.note ? `<p class="small">"${esc(l.note)}"</p>` : ""}</div>`;
 }
+
+/* ----- progress: estimated 1RM over time and PRs, for the athlete and on their profile ----- */
+// Exercise name for a logged entry, from the entry itself or the program it was logged against.
+const nameOf = (l, exId) => program(l.program_id)?.weeks[l.week]?.days.find((d) => d.id === l.day_id)?.exercises.find((x) => x.id === exId)?.name;
+const clientLogs = (cid) => D.logs.filter((l) => l.client_id === cid);
+const kgs = (n) => `${+n.toFixed(1)} kg`;
+function progressBox(cid) {
+  const sets = liftSets(clientLogs(cid), nameOf), ser = series(sets), recs = records(sets);
+  if (!ser.size) return `<section class="stack"><div class="section-head"><h2>Progress</h2></div><div class="empty">Log sets with reps and kg and each lift's progress shows here.</div></section>`;
+  const keys = [...ser.keys()].sort((a, b) => ser.get(b).points.length - ser.get(a).points.length || a.localeCompare(b));
+  const pick = ui.progEx?.[cid] && ser.has(ui.progEx[cid]) ? ui.progEx[cid] : keys[0], s = ser.get(pick);
+  const rows = keys.map((k) => {
+    const r = recs.get(k), m = D.progReady && maxFor(cid, r.name), better = D.progReady && r.best && (!m || r.best.e1rm > +m.kg);
+    return `<tr><th scope="row">${esc(r.name)}</th><td class="num">${kgs(r.heaviest.kg)} x ${r.heaviest.reps}<span class="muted small"> ${fmtDay(r.heaviest.date)}</span></td>
+      <td class="num">${r.best ? kgs(r.best.e1rm) : "-"}${m ? `<span class="muted small"> 1RM ${+m.kg}</span>` : ""}${better ? ` <button class="link small" data-act="use-e1rm" data-cid="${cid}" data-ex="${esc(r.name)}" data-kg="${Math.round(r.best.e1rm * 2) / 2}">Use as 1RM</button>` : ""}</td></tr>`;
+  }).join("");
+  return `<section class="stack"><div class="section-head"><h2>Progress</h2><span class="muted small">Estimated 1RM from the best set each session</span></div>
+    <label class="f">Lift<select class="t" id="prog-ex-${cid}" data-change="prog-ex" data-cid="${cid}">${keys.map((k) => `<option value="${esc(k)}"${k === pick ? " selected" : ""}>${esc(ser.get(k).name)} (${ser.get(k).points.length})</option>`).join("")}</select></label>
+    ${chart(s)}
+    <div class="tbl"><table class="recs"><caption class="kicker">Personal records</caption><thead><tr><th scope="col">Lift</th><th scope="col">Heaviest</th><th scope="col">Best est. 1RM</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+// One lift, one line: estimated 1RM by session date. Tap or hover a point for the set behind it.
+function chart(s) {
+  const W = innerWidth < 600 ? 360 : 600, H = W < 600 ? 210 : 220, L = 40, R = 48, T = 14, B = 28, pts = s.points;
+  const vals = pts.map((p) => p.e1rm), lo0 = Math.min(...vals), hi0 = Math.max(...vals), pad = Math.max(2.5, (hi0 - lo0) * 0.15);
+  const step = [2.5, 5, 10, 20, 25, 50].find((x) => (hi0 - lo0 + 2 * pad) / x <= 4) || 100;
+  const lo = Math.floor((lo0 - pad) / step) * step, hi = Math.ceil((hi0 + pad) / step) * step;
+  const t0 = parseYmd(pts[0].date).getTime(), t1 = parseYmd(pts[pts.length - 1].date).getTime();
+  const x = (p) => (pts.length === 1 ? (L + W - R) / 2 : L + ((parseYmd(p.date).getTime() - t0) / (t1 - t0 || 1)) * (W - L - R));
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const grid = []; for (let v = lo; v <= hi + 1e-9; v += step) grid.push(v);
+  const last = pts[pts.length - 1];
+  return `<figure class="chart" data-chart><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(s.name)} estimated 1RM: ${pts.map((p) => `${fmtDay(p.date)} ${kgs(p.e1rm)}`).join(", ")}">
+    ${grid.map((v) => `<line class="gl" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="ax" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${+v.toFixed(1)}</text>`).join("")}
+    <text class="ax" x="${L}" y="${H - 8}">${fmtDay(pts[0].date)}</text>${pts.length > 1 ? `<text class="ax" x="${W - R}" y="${H - 8}" text-anchor="end">${fmtDay(last.date)}</text>` : ""}
+    ${pts.length > 1 ? `<polyline class="ln" points="${pts.map((p) => `${x(p)},${y(p.e1rm)}`).join(" ")}"/>` : ""}
+    ${pts.map((p) => `<circle class="pt" cx="${x(p)}" cy="${y(p.e1rm)}" r="4.5"/><circle class="hit" cx="${x(p)}" cy="${y(p.e1rm)}" r="16" data-tip="${esc(`${fmtDay(p.date)}: ${kgs(p.kg)} x ${p.reps}, est. 1RM ${kgs(p.e1rm)}`)}"/>`).join("")}
+    <text class="lbl" x="${x(last) + 9}" y="${y(last.e1rm) + 4}">${+last.e1rm.toFixed(1)}</text></svg>
+    <div class="tip" role="status" hidden></div></figure>`;
+}
+document.addEventListener("pointerover", (ev) => {
+  const h = ev.target.closest?.(".hit"); const fig = ev.target.closest?.("[data-chart]"); if (!fig) return;
+  const tip = fig.querySelector(".tip");
+  if (!h) { tip.hidden = true; return; }
+  const box = fig.getBoundingClientRect(), r = h.getBoundingClientRect();
+  tip.textContent = h.dataset.tip; tip.hidden = false;
+  const half = tip.offsetWidth / 2 + 4;
+  tip.style.left = Math.min(Math.max(r.left + r.width / 2 - box.left, half), box.width - half) + "px"; tip.style.top = r.top - box.top - 6 + "px";
+});
 
 /* ----- client: training ----- */
 function vToday() {
@@ -722,7 +774,7 @@ function logFor(k) {
     // A draft stays out of D.logs until the client actually enters something.
     const dr = ui.draftLog;
     l = dr && dr.week === k.w && dr.day_id === day.id ? dr : (ui.draftLog = { id: crypto.randomUUID(), client_id: me.id, program_id: p.id, week: k.w, day_id: day.id, date: ymd(sessionDate(start, k.w, day.dow)), done: false, note: "",
-      entries: day.exercises.map((e) => ({ exId: e.id, sets: Array.from({ length: +e.sets || 1 }, () => ({ reps: "", kg: "", rpe: "", done: false })) })) });
+      entries: day.exercises.map((e) => ({ exId: e.id, name: e.name, sets: Array.from({ length: +e.sets || 1 }, () => ({ reps: "", kg: "", rpe: "", done: false })) })) });
   }
   return { l, day };
 }
@@ -862,7 +914,7 @@ function vClientVideos() {
 }
 function vHistory() {
   const logs = D.logs.filter((l) => l.client_id === me.id);
-  return `<section class="hero"><div class="kicker">Training log</div><h1>What you've done</h1></section>${maxesBox(me.id)}${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Log a session from the Training tab and it shows up here.</div>'}`;
+  return `<section class="hero"><div class="kicker">Training log</div><h1>What you've done</h1></section>${maxesBox(me.id)}${progressBox(me.id)}${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Log a session from the Training tab and it shows up here.</div>'}`;
 }
 
 /* ---------- events ---------- */
@@ -1036,6 +1088,10 @@ document.addEventListener("click", async (ev) => {
       try { await saveMax(b.dataset.cid, ex, kg); render(); toast(`${ex} 1RM saved: ${kg} kg.`); } catch (err) { fail(err, "1RM"); b.disabled = false; }
       break;
     }
+    case "use-e1rm":
+      b.disabled = true;
+      try { await saveMax(b.dataset.cid, b.dataset.ex, +b.dataset.kg); render(); toast(`${b.dataset.ex} 1RM set to ${b.dataset.kg} kg.`); } catch (err) { fail(err, "1RM"); b.disabled = false; }
+      break;
     case "max-del":
       if (!confirm(`Remove the ${b.dataset.ex} 1RM?`)) return;
       try { await saveMax(b.dataset.cid, b.dataset.ex, null); render(); } catch (err) { fail(err, "1RM"); }
@@ -1115,7 +1171,8 @@ document.addEventListener("click", async (ev) => {
     case "finish-log": {
       const { l } = logFor(ui.logKey); l.done = true;
       const ok = await saveLogSoon(l, true);
-      if (ok !== undefined) { go(() => (ui.view = null)); toast("Session logged."); scrollTo(0, 0); }
+      const prs = newPRs(l, clientLogs(me.id), nameOf);
+      if (ok !== undefined) { go(() => (ui.view = null)); toast(prs.length ? `Session logged. New PR${prs.length > 1 ? "s" : ""}: ${prs.map((x) => x.kind === "heaviest" ? `${x.name} ${x.kg} kg x ${x.reps}` : `${x.name} est. 1RM ${x.e1rm} kg`).join(", ")}.` : "Session logged."); scrollTo(0, 0); }
       break;
     }
     case "film": go(() => { ui.filmEx = b.dataset.ex; ui.tab = "videos"; ui.view = null; }); scrollTo(0, 0); break;
@@ -1187,6 +1244,7 @@ document.addEventListener("change", async (ev) => {
   if (t.id === "xl-file") { const f = t.files?.[0]; t.value = ""; if (f) { const bad = checkVideo(f); if (bad) return toast(bad); ui.demoFile = f; warmUp(); document.getElementById("xl-file-name").textContent = f.name; } return; }
   if (t.id === "ref-file") { const f = t.files?.[0]; t.value = ""; if (f) { warmUp(); addRef(f); } return; }
   const a = t.dataset.change; if (!a) return;
+  if (a === "prog-ex") { ui.progEx = { ...ui.progEx, [t.dataset.cid]: t.value }; render(); return; }
   if (a === "ath-group") { ui.athGroup = t.value; ui.athSel = new Set(); render(); return; }
   if (a === "ath-sel") { t.checked ? ui.athSel.add(t.dataset.id) : ui.athSel.delete(t.dataset.id); render(); return; }
   if (a === "ath-all") { document.querySelectorAll('[data-change="ath-sel"]').forEach((x) => { if (!x.closest(".ath-row").hidden) t.checked ? ui.athSel.add(x.dataset.id) : ui.athSel.delete(x.dataset.id); }); render(); return; }
