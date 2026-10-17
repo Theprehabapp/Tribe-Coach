@@ -186,3 +186,78 @@ details > summary { cursor: pointer; font-weight: 600; color: var(--muted); }
 .demo-vid:empty { display: none; }
 input.t.kg { width: 84px; }
 .max-add input.t { width: 96px; }
+
+/* Wide screens: the coach's program, session and athlete views use the full width, tabs move to a left rail. */
+body.wide main#app, body.wide .top-in { max-width: 1480px; }
+@media (min-width: 1100px) {
+  body { padding-left: 96px; }
+  .tabs { top: 0; right: auto; width: 96px; border-top: 0; border-right: 1px solid var(--rule); padding-top: 72px; }
+  .tabs-in { grid-auto-flow: row; grid-auto-rows: max-content; gap: 6px; }
+  .tabs button { padding: 12px 4px; }
+  main#app { padding-bottom: 48px; }
+}
+
+/* Program grid: weeks down, Day 1 to Day 7 across. Scrolls sideways on a phone. */
+.pgrid-wrap { overflow-x: auto; margin-inline: -16px; padding-inline: 16px; scroll-snap-type: x proximity; }
+.pgrid { display: grid; grid-template-columns: repeat(7, minmax(178px, 1fr)); gap: 0 14px; min-width: 1300px; }
+@media (min-width: 1480px) { .pgrid { min-width: 0; } }
+.pg-head { font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; padding: 10px 2px; border-bottom: 2px solid var(--fg); scroll-snap-align: start; }
+.pg-week { grid-column: 1 / -1; display: flex; align-items: center; justify-content: flex-start; gap: 10px; padding: 22px 0 10px; border-bottom: 1px solid var(--rule); margin-bottom: 10px; }
+.pg-week h2 { text-transform: uppercase; letter-spacing: .04em; }
+.pg-cell { display: grid; align-content: start; gap: 10px; min-width: 0; }
+.pg-add { border: 1px dashed var(--rule); background: none; color: var(--muted); border-radius: 10px; padding: 4px; cursor: pointer; font-size: 18px; line-height: 1; }
+.pg-add:hover { border-color: var(--muted); color: var(--fg); }
+.sess { display: grid; gap: 8px; text-align: left; background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 12px; cursor: pointer; width: 100%; min-width: 0; }
+.sess:hover, .sess.on { border-color: var(--fg); }
+.sess-name { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.sx { display: grid; grid-template-columns: 28px 1fr; gap: 8px; align-items: start; position: relative; }
+.sx-t { display: grid; gap: 1px; font-weight: 600; line-height: 1.25; min-width: 0; overflow-wrap: anywhere; }
+.lb { width: 26px; height: 26px; border: 1.5px solid var(--fg); border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--surface); position: relative; z-index: 1; }
+.lb:empty { border-style: dashed; border-color: var(--rule); }
+.sx.ss + .sx.ss::before { content: ""; position: absolute; left: 13px; top: -14px; height: 16px; border-left: 1.5px solid var(--fg); }
+
+/* Session editor: calendar of the program's days on the left, the session on the right. */
+.sess-layout { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 28px; align-items: start; }
+.sess-side { position: sticky; top: 70px; display: grid; gap: 18px; max-height: calc(100vh - 90px); overflow: auto; padding-right: 4px; }
+.cal { display: grid; gap: 8px; max-height: 300px; overflow: auto; border-bottom: 1px solid var(--rule); padding-bottom: 12px; }
+.cal-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.cal-d { background: none; border: 0; border-radius: 999px; padding: 6px 0 2px; cursor: pointer; display: grid; justify-items: center; font-size: 15px; line-height: 1.2; }
+.cal-d .dots { font-size: 9px; letter-spacing: 1px; color: var(--muted); min-height: 11px; }
+.cal-d[aria-current="true"] { background: var(--fg); color: var(--bg); }
+.cal-d[aria-current="true"] .dots { color: var(--bg); }
+@media (max-width: 900px) { .sess-layout { grid-template-columns: 1fr; } .sess-side { position: static; max-height: none; order: 2; } }
+textarea.tall { min-height: 140px; }
+.exb { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; border-top: 1px solid var(--rule); padding-top: 16px; }
+.exb-lb { width: 40px; height: 40px; border: 2px solid var(--fg); border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 15px; }
+.exb-lb:empty { border-style: dashed; border-color: var(--rule); }
+.exb-top { display: grid; grid-template-columns: minmax(0, 1fr) 70px auto; gap: 10px; align-items: end; }
+.exb-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 760px) { .exb { grid-template-columns: 1fr; } .exb-grid { grid-template-columns: 1fr; } .exb-top { grid-template-columns: 1fr 70px; } .exb-top > .row { grid-column: 1 / -1; } }
+table.sets { width: 100%; border-collapse: collapse; }
+table.sets th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 0 6px 6px 0; }
+table.sets td { padding: 3px 6px 3px 0; }
+table.sets td:first-child { width: 48px; }
+table.sets td:last-child, table.sets th:last-child { width: 36px; padding-right: 0; }
+table.sets input.t { padding: 7px 9px; }
+
+/* Athletes table: one row per athlete; on a phone the extra columns wrap under the name. */
+.ath-tools { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.ath-tools .grow { flex: 1 1 220px; }
+.ath-tools .bulk { margin-left: auto; }
+.ath { display: grid; border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.ath-row { display: grid; grid-template-columns: 40px minmax(220px, 2fr) 132px minmax(160px, 2fr) minmax(100px, 1fr) 110px; gap: 12px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--rule); }
+.ath-row:first-child { border-top: 0; }
+.ath-head { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--surface-2); }
+.ath-name { display: flex; gap: 12px; align-items: center; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; min-width: 0; }
+.ath-name > span:last-child { display: grid; min-width: 0; }
+.ath-name .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.av { width: 40px; height: 40px; border-radius: 50%; background: var(--fg); color: var(--bg); display: grid; place-items: center; font-weight: 700; font-size: 14px; flex: none; }
+.ath-act { display: flex; gap: 4px; }
+.ico { position: relative; background: none; border: 1px solid transparent; border-radius: 8px; padding: 6px; cursor: pointer; color: var(--fg); display: grid; place-items: center; }
+.ico:hover { border-color: var(--rule); }
+.ico .badge { position: absolute; top: -4px; right: -4px; background: var(--fg); color: var(--bg); border-radius: 999px; font-size: 10px; font-weight: 700; padding: 0 5px; line-height: 16px; }
+@media (max-width: 820px) {
+  .ath-head { display: none; }
+  .ath-row { grid-template-columns: 28px minmax(0, 1fr) auto; row-gap: 4px; }
+  .ath-row > :nth-child(n+4) { grid-column: 2 / -1; }
+}

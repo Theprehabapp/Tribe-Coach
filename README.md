@@ -97,6 +97,8 @@ A new chat message also sends a phone notification to the other person, if they'
 
 ## Programming
 
+- **Program layout:** a program opens as a grid, weeks down the page and Day 1 (Monday) to Day 7 across, each session a card. Tap a session to edit it: the program's days sit on the left as a calendar (dots show how many sessions), the session on the right. On a phone the grid scrolls sideways.
+- **Per-set targets:** each exercise has a set table. Pick a column (kg, % 1RM, RPE, watts, seconds, metres, calories) and set reps and a target per set, e.g. 5 @ 80%, 3 @ 85%, 2 @ 90%. Athletes see each set's reps and kg as hints in their log.
 - **Supersets:** each exercise has a **Block** letter. Exercises sharing a letter are a superset and show as A1, A2 (a block of one is just "A"). New exercises get the next letter, so set the same letter to pair them.
 - **1RMs:** each athlete has a list of 1RMs (on their profile for you, under **Log** for them). A percentage target such as `70-75% of 1RM` then shows as kilograms in their session, rounded to 2.5 kg. If a lift has no 1RM yet, the session offers a box to add it.
 - **Exercise library:** Programs, then **Exercise library**. Add a demo as a link (YouTube, Instagram) or an uploaded video, plus cues. Athletes get a **Watch demo** button wherever that exercise is programmed. Names are matched ignoring capitals and spaces.

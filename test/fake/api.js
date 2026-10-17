@@ -9,6 +9,7 @@ const ben = { id: "b", email: "ben@x", name: "Ben", role: "client", approved: fa
 const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [] };
 if (new URLSearchParams(location.search).get("seed")) {
   db.programs.push({ id: "p-seed", ...exampleProgram() }); amy.program_id = "p-seed";
+  db.logs.push({ id: "l-seed", client_id: "a", program_id: "p-seed", week: 0, day_id: db.programs[0].weeks[0].days[0].id, date: "2026-09-28", done: true, note: "", entries: [] });
   db.exercises.push({ id: "x1", name: "Back Squat", demo_url: "", demo_path: "c/demo-back-squat--1.webm", cues: "Brace, sit between your heels." });
   db.maxes.push({ client_id: "a", exercise: "Back Squat", kg: 120, tested_on: "2026-10-01" });
   db.videos.push({ id: "v-seed2", client_id: "a", exercise: "Deadlift", note: "", slot: "2026-01-02", status: "waiting", verdict: "", feedback: "", uploaded_at: "2026-01-02T09:00:00Z", storage_path: "a/y.webm", review_path: null, clips: [] });
@@ -18,6 +19,8 @@ if (new URLSearchParams(location.search).get("seed")) {
 }
 // ?team=1: Amy follows the seeded program through a team instead of having it assigned directly.
 if (new URLSearchParams(location.search).get("team") && db.programs.length) { db.teams.push({ id: "t-seed", name: "Morning Crew", program_id: "p-seed", start_date: "2026-09-28" }); amy.program_id = null; amy.start_date = null; amy.team_id = "t-seed"; }
+// ?rows=1: this week's Back Squat is prescribed set by set off a %.
+if (new URLSearchParams(location.search).get("rows") && db.programs.length) Object.assign(db.programs[0].weeks[2].days[0].exercises[0], { metric: "% 1RM", sets: 4, reps: "5,3,2,1", target: "", rows: [{ reps: "5", val: "80" }, { reps: "3", val: "85" }, { reps: "2", val: "90" }, { reps: "1", val: "95" }] });
 const meRow = role === "coach" ? coach : amy;
 export const getSession = async () => (role === "none" ? null : { user: { id: meRow.id } });
 export const onAuth = () => {};
