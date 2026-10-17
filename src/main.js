@@ -16,7 +16,7 @@ const app = document.getElementById("app");
 const tabsEl = document.getElementById("tabs");
 
 // All data the signed-in person may see, loaded once and kept in sync as they act.
-let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false, teams: [], teamsReady: false };
+let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false, teams: [], teamsReady: false, socialReady: false };
 let me = null; // signed-in profile
 let ui = { tab: null, view: null, programId: null, week: 0, clientId: null, logKey: null, drafts: {}, file: null, busy: false };
 
@@ -174,6 +174,7 @@ function render() {
   hydrateVideos();
   afterChatPaint();
   filterAth();
+  hydrateBoards();
   document.body.classList.toggle("wide", ["program", "session"].includes(ui.view) || (isCoach() && !ui.view && ui.tab === "clients"));
   if (ui.view === "review") { openBreakdown(); paintCompare(); }
 }
@@ -494,7 +495,9 @@ function vTeam() {
     <label class="f">Name<input class="t" id="t-name" maxlength="60" data-change="t-name" value="${esc(t.name)}"></label>
     <div class="grid2"><label class="f">Program<select class="t" id="t-prog" data-change="t-prog"><option value="">None</option>${libraryPrograms().map((p) => `<option value="${p.id}"${t.program_id === p.id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
     <label class="f">Start date<input class="t" type="date" id="t-start" data-change="t-start" value="${esc(t.start_date || "")}"></label></div>
-    <p class="muted small">Everyone in the team trains this program from this date, unless they have their own program.</p></section>
+    <p class="muted small">Everyone in the team trains this program from this date, unless they have their own program.</p>
+    ${D.socialReady ? `<label class="row small"><input type="checkbox" data-change="t-board"${t.leaderboard !== false ? " checked" : ""}> Show the team leaderboard to its athletes</label>` : ""}</section>
+    ${boardBox(t, true)}
     <section class="stack"><div class="section-head"><h2>Athletes</h2><span class="muted small num">${athletes.filter((c) => c.team_id === t.id).length}</span></div>
     ${athletes.length ? `<div class="list">${athletes.map((c) => { const other = c.team_id && c.team_id !== t.id ? teamOf(c) : null;
       return `<label class="item static row spread"><span><strong>${esc(c.name || c.email)}</strong>${other ? ` <span class="small muted">in ${esc(other.name)}</span>` : ""}${c.program_id ? ' <span class="small muted">has own program</span>' : ""}</span>
@@ -597,9 +600,11 @@ const openThread = () => (isCoach() ? (ui.view === "client" && ui.clientTab === 
 function chatBox(cid, who) {
   if (!D.chatReady) return '<div class="empty">Chat isn\'t switched on yet. Run the 0004 database update (see the README).</div>';
   const ref = ui.chatRef && D.videos.find((v) => v.id === ui.chatRef && v.client_id === cid);
+  const lref = ui.chatLog && D.logs.find((l) => l.id === ui.chatLog && l.client_id === cid);
   return `<section class="stack">${pushNotice(who)}<div class="chat" id="chat-list">${chatList(cid, who)}</div>
     <form id="chat-form" class="chat-compose stack" data-cid="${cid}">
       ${ref ? `<div class="row"><span class="chip">About ${esc(ref.exercise)}, ${fmtDay(new Date(ref.uploaded_at))}</span><button class="link small" type="button" data-act="unref">Remove</button></div>` : ""}
+      ${lref ? `<div class="row"><span class="chip">About ${esc(logTitle(lref))}</span><button class="link small" type="button" data-act="unref">Remove</button></div>` : ""}
       <div class="row chat-row"><textarea class="t" id="chat-body" data-input="chat" rows="2" maxlength="4000" placeholder="Message ${esc(who)}">${esc(ui.chatDraft || "")}</textarea>
       <button class="btn primary" type="submit">Send</button></div></form></section>`;
 }
@@ -636,8 +641,8 @@ function chatList(cid, who) {
   const msgs = D.messages.filter((m) => m.client_id === cid);
   if (!msgs.length) return `<p class="small muted">No messages yet. Say hi to ${esc(who)}.</p>`;
   return msgs.map((m) => {
-    const v = m.video_id && D.videos.find((x) => x.id === m.video_id);
-    return `<div class="msg${m.sender_id === me.id ? " mine" : ""}">${v ? `<span class="small muted">About ${esc(v.exercise)}, ${fmtDay(new Date(v.uploaded_at))}</span>` : ""}
+    const v = m.video_id && D.videos.find((x) => x.id === m.video_id), lg = m.log_id && D.logs.find((x) => x.id === m.log_id);
+    return `<div class="msg${m.sender_id === me.id ? " mine" : ""}">${v ? `<span class="small muted">About ${esc(v.exercise)}, ${fmtDay(new Date(v.uploaded_at))}</span>` : ""}${lg ? `<span class="small muted">About ${esc(logTitle(lg))}</span>` : ""}
       ${m.clip_path ? `<div class="vid wide" data-video="${esc(m.clip_path)}">Loading video</div>` : ""}${m.body ? `<p>${esc(m.body)}</p>` : ""}<span class="tiny muted">${fmtTime(m.created_at)}</span></div>`;
   }).join("");
 }
@@ -677,9 +682,9 @@ async function sendChat(form) {
   const btn = form.querySelector("button[type=submit]");
   btn.disabled = true;
   try {
-    const row = await api.sendMessage({ client_id: cid, body, video_id: ui.chatRef || null });
+    const row = await api.sendMessage({ client_id: cid, body, video_id: ui.chatRef || null, log_id: D.socialReady ? ui.chatLog : null });
     addMessage(row);
-    ui.chatDraft = ""; ui.chatRef = null; render();
+    ui.chatDraft = ""; ui.chatRef = null; ui.chatLog = null; render();
     document.getElementById("chat-body")?.focus();
   } catch (e) { fail(e, "Your message"); btn.disabled = false; }
 }
@@ -692,7 +697,11 @@ function logSummary(l) {
     const pr = prs.find((x) => exKey(x.name) === exKey(e.name));
     return `<div class="small"><strong>${esc(e.name)}</strong>${pr ? ` <span class="chip solid" title="${pr.kind === "heaviest" ? "Heaviest yet" : "Best estimated 1RM yet"}">PR</span>` : ""} <span class="muted num">${sets.map((s) => esc(s.reps || "-") + (s.kg ? ` x ${esc(s.kg)}kg` : "") + (s.rpe ? ` @${esc(s.rpe)}` : "")).join(", ")}</span></div>`;
   }).join("");
-  return `<div class="card"><div class="row spread"><strong>${esc(day ? day.name : "Session")}</strong><span class="muted small">W${l.week + 1}, ${fmtDay(l.date)}${l.done ? "" : ", in progress"}</span></div>${lines}${l.note ? `<p class="small">"${esc(l.note)}"</p>` : ""}</div>`;
+  const talk = D.socialReady && D.chatReady ? D.messages.filter((m) => m.log_id === l.id) : [];
+  const who = (m) => (m.sender_id === me.id ? "You" : isCoach() ? esc(profile(m.sender_id)?.name || "Athlete") : "Coach");
+  return `<div class="card"><div class="row spread"><strong>${esc(day ? day.name : "Session")}</strong><span class="muted small">W${l.week + 1}, ${fmtDay(l.date)}${l.done ? "" : ", in progress"}</span></div>${lines}${l.note ? `<p class="small">"${esc(l.note)}"</p>` : ""}
+    ${talk.map((m) => `<p class="small comment"><strong>${who(m)}:</strong> ${esc(m.body)}</p>`).join("")}
+    ${D.socialReady && D.chatReady && l.done ? `<div class="row"><button class="link small" data-act="log-comment" data-id="${l.id}" data-cid="${l.client_id}">${isCoach() ? "Comment" : "Comment to your coach"}</button></div>` : ""}</div>`;
 }
 
 /* ----- progress: estimated 1RM over time and PRs, for the athlete and on their profile ----- */
@@ -743,6 +752,38 @@ document.addEventListener("pointerover", (ev) => {
   const half = tip.offsetWidth / 2 + 4;
   tip.style.left = Math.min(Math.max(r.left + r.width / 2 - box.left, half), box.width - half) + "px"; tip.style.top = r.top - box.top - 6 + "px";
 });
+
+/* ----- team leaderboard: best set per lift, ranked by estimated 1RM ----- */
+// Filled in after render, since it comes from the database rather than what's already loaded.
+function boardBox(team, coachView) {
+  if (!D.socialReady || !team) return "";
+  if (!coachView && team.leaderboard === false) return "";
+  return `<section class="stack"><div class="section-head"><h2>${esc(team.name)} leaderboard</h2><span class="muted small">Best set per lift, ranked by estimated 1RM</span></div>
+    <div data-board="${team.id}">${boardBody(team.id)}</div></section>`;
+}
+function boardBody(tid) {
+  const rows = ui.boards?.[tid];
+  if (!rows) return '<p class="small muted">Loading leaderboard</p>';
+  if (!rows.length) return '<div class="empty">No logged sets with reps and kg in this team yet.</div>';
+  const lifts = [...new Map(rows.map((r) => [exKey(r.exercise), r.exercise])).entries()]
+    .map(([k, name]) => ({ k, name, n: rows.filter((r) => exKey(r.exercise) === k).length })).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+  const pick = lifts.some((x) => x.k === ui.boardEx?.[tid]) ? ui.boardEx[tid] : lifts[0].k;
+  const ranked = rows.filter((r) => exKey(r.exercise) === pick).sort((a, b) => +b.e1rm - +a.e1rm);
+  return `<label class="f">Lift<select class="t" id="board-ex-${tid}" data-change="board-ex" data-tid="${tid}">${lifts.map((x) => `<option value="${esc(x.k)}"${x.k === pick ? " selected" : ""}>${esc(x.name)} (${x.n})</option>`).join("")}</select></label>
+    <div class="tbl"><table class="recs board"><thead><tr><th scope="col">#</th><th scope="col">Athlete</th><th scope="col">Best set</th><th scope="col">Est. 1RM</th></tr></thead><tbody>
+    ${ranked.map((r, i) => `<tr${r.client_id === me.id ? ' class="me"' : ""}><td class="num">${i + 1}</td><th scope="row">${esc(r.athlete)}${r.client_id === me.id ? " (you)" : ""}</th><td class="num">${+r.kg} kg x ${r.reps}<span class="muted small"> ${fmtDay(r.day)}</span></td><td class="num">${+(+r.e1rm).toFixed(1)} kg</td></tr>`).join("")}</tbody></table></div>`;
+}
+async function hydrateBoards() {
+  for (const el of document.querySelectorAll("[data-board]")) {
+    const tid = el.dataset.board;
+    if (ui.boards?.[tid]) continue;
+    try { const rows = await api.teamBoard(tid); ui.boards = { ...ui.boards, [tid]: rows }; }
+    catch (err) { console.error(err); ui.boards = { ...ui.boards, [tid]: [] }; }
+    document.querySelectorAll(`[data-board="${tid}"]`).forEach((x) => (x.innerHTML = boardBody(tid)));
+  }
+}
+// "Tribe Build, Mon 5 Oct" for a logged session.
+const logTitle = (l) => `${program(l.program_id)?.weeks[l.week]?.days.find((d) => d.id === l.day_id)?.name || "Session"}, ${fmtDay(l.date)}`;
 
 /* ----- client: training ----- */
 function vToday() {
@@ -914,7 +955,7 @@ function vClientVideos() {
 }
 function vHistory() {
   const logs = D.logs.filter((l) => l.client_id === me.id);
-  return `<section class="hero"><div class="kicker">Training log</div><h1>What you've done</h1></section>${maxesBox(me.id)}${progressBox(me.id)}${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Log a session from the Training tab and it shows up here.</div>'}`;
+  return `<section class="hero"><div class="kicker">Training log</div><h1>What you've done</h1></section>${maxesBox(me.id)}${progressBox(me.id)}${boardBox(teamOf(me), false)}${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Log a session from the Training tab and it shows up here.</div>'}`;
 }
 
 /* ---------- events ---------- */
@@ -999,7 +1040,11 @@ document.addEventListener("click", async (ev) => {
     case "push-off":
       try { await notify.turnOff(); ui.push = "off"; toast("Notifications are off for this phone."); } catch (err) { fail(err, "Notifications"); }
       render(); break;
-    case "unref": ui.chatRef = null; ui.chatDraft = document.getElementById("chat-body")?.value || ""; render(); break;
+    case "log-comment":
+      if (isCoach()) go(() => { ui.clientId = b.dataset.cid; ui.view = "client"; ui.clientTab = "chat"; ui.chatRef = null; ui.chatLog = id; });
+      else go(() => { ui.tab = "chat"; ui.view = null; ui.chatRef = null; ui.chatLog = id; });
+      scrollTo(0, 0); break;
+    case "unref": ui.chatRef = null; ui.chatLog = null; ui.chatDraft = document.getElementById("chat-body")?.value || ""; render(); break;
     case "rv-verdict": {
       ui.drafts[id] = { ...(ui.drafts[id] || { feedback: "" }), verdict: v };
       b.parentElement.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b));
@@ -1172,6 +1217,7 @@ document.addEventListener("click", async (ev) => {
       const { l } = logFor(ui.logKey); l.done = true;
       const ok = await saveLogSoon(l, true);
       const prs = newPRs(l, clientLogs(me.id), nameOf);
+      ui.boards = {}; // fresh numbers next time a leaderboard shows
       if (ok !== undefined) { go(() => (ui.view = null)); toast(prs.length ? `Session logged. New PR${prs.length > 1 ? "s" : ""}: ${prs.map((x) => x.kind === "heaviest" ? `${x.name} ${x.kg} kg x ${x.reps}` : `${x.name} est. 1RM ${x.e1rm} kg`).join(", ")}.` : "Session logged."); scrollTo(0, 0); }
       break;
     }
@@ -1244,6 +1290,12 @@ document.addEventListener("change", async (ev) => {
   if (t.id === "xl-file") { const f = t.files?.[0]; t.value = ""; if (f) { const bad = checkVideo(f); if (bad) return toast(bad); ui.demoFile = f; warmUp(); document.getElementById("xl-file-name").textContent = f.name; } return; }
   if (t.id === "ref-file") { const f = t.files?.[0]; t.value = ""; if (f) { warmUp(); addRef(f); } return; }
   const a = t.dataset.change; if (!a) return;
+  if (a === "board-ex") { ui.boardEx = { ...ui.boardEx, [t.dataset.tid]: t.value }; document.querySelector(`[data-board="${t.dataset.tid}"]`).innerHTML = boardBody(t.dataset.tid); return; }
+  if (a === "t-board") {
+    try { const row = await api.saveTeam(ui.teamId, { leaderboard: t.checked }); D.teams = D.teams.map((x) => (x.id === row.id ? row : x)); toast(t.checked ? "Athletes in this team can see the leaderboard." : "Leaderboard hidden from athletes."); }
+    catch (err) { fail(err, "Team"); t.checked = !t.checked; }
+    return;
+  }
   if (a === "prog-ex") { ui.progEx = { ...ui.progEx, [t.dataset.cid]: t.value }; render(); return; }
   if (a === "ath-group") { ui.athGroup = t.value; ui.athSel = new Set(); render(); return; }
   if (a === "ath-sel") { t.checked ? ui.athSel.add(t.dataset.id) : ui.athSel.delete(t.dataset.id); render(); return; }
