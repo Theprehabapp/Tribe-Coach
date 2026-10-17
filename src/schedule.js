@@ -39,14 +39,53 @@ export function sessionDate(startYmd, week, dow) {
   return addDays(s, week * 7 + ((dow - s.getDay() + 7) % 7));
 }
 
-// "4 x 8.8 @ 7 RPE (single arm)"
-export const rxLine = (e) => `${e.sets} x ${e.reps}${e.target ? " @ " + e.target : ""}${e.cue ? " (" + e.cue + ")" : ""}`;
+// Per-set prescriptions. An exercise can carry rows [{reps, val}] plus a metric for the val column;
+// older exercises only have sets + reps + a free-text target, which still works everywhere.
+export const METRICS = ["", "kg", "% 1RM", "RPE", "Watts", "Seconds", "Metres", "Calories"];
+const UNIT = { kg: " kg", RPE: " RPE", Watts: " W", Seconds: " sec", Metres: " m", Calories: " cal" };
+export function valText(val, metric) {
+  const v = String(val ?? "").trim();
+  if (!v || !metric) return v;
+  return metric === "% 1RM" ? `${v.replace(/%$/, "")}% of 1RM` : v + (UNIT[metric] || "");
+}
+export function rowsOf(e) {
+  if (e.rows?.length) return e.rows;
+  return Array.from({ length: Math.max(1, +e.sets || 1) }, () => ({ reps: String(e.reps ?? ""), val: "" }));
+}
+const same = (a) => new Set(a.map((x) => String(x ?? "").trim())).size <= 1;
+const varied = (e) => !!e.rows?.length && !(same(e.rows.map((r) => r.reps)) && (!e.metric || same(e.rows.map((r) => r.val))));
+// Write rows back onto sets, reps and target so the summary line, athlete log and copies agree.
+export function applyRows(e, rows) {
+  e.rows = rows; e.sets = rows.length;
+  e.reps = same(rows.map((r) => r.reps)) ? String(rows[0]?.reps ?? "").trim() : rows.map((r) => String(r.reps).trim()).join(",");
+  if (e.metric) e.target = same(rows.map((r) => r.val)) ? valText(rows[0]?.val, e.metric) : "";
+  return e;
+}
+// The number in an old free-text target, for when a metric column is switched on ("7 RPE" -> "7").
+export function parseVal(target, metric) {
+  const t = String(target || "");
+  const re = { "% 1RM": /(\d+(?:\.\d+)?(?:-\d+(?:\.\d+)?)?)\s*%/, RPE: /(\d+(?:\.\d+)?(?:-\d+(?:\.\d+)?)?)\s*RPE/i, kg: /(\d+(?:\.\d+)?)\s*kg/i, Watts: /(\d+)\s*w/i }[metric];
+  return re?.exec(t)?.[1] || "";
+}
+// "4 x 8.8 @ 7 RPE (single arm)", or set by set when the sets differ: "3 sets: 5 @ 70% of 1RM, 5 @ 75% of 1RM, 3 @ 80% of 1RM".
+export function rxLine(e) {
+  const cue = e.cue ? " (" + e.cue + ")" : "";
+  if (varied(e)) return `${e.rows.length} sets: ${e.rows.map((r) => `${String(r.reps).trim()}${String(r.val ?? "").trim() ? " @ " + valText(r.val, e.metric) : ""}`).join(", ")}${cue}`;
+  return `${e.sets} x ${e.reps}${e.target ? " @ " + e.target : ""}${cue}`;
+}
+// Short form for the program grid: "3 x 13".
+export const shortRx = (e) => `${e.sets} x ${e.reps}`;
+// Day 1 is Monday, Day 7 Sunday, matching a Monday start date.
+export const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+export const dayNum = (dow) => ((dow + 6) % 7) + 1;
 
 // Copying a week forward: % bands creep 2.5%, Week 1 calibration lines become a load increase.
 export const W1_LINE = "- Establishing working loads this week to build on in the coming weeks.";
 export function bumpTarget(target) {
   return target.replace(/(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)%/, (_, lo, hi) => `${+lo + 2.5}-${+hi + 2.5}%`);
 }
+// A per-set % value ("75" or "70-75") moved up 2.5%.
+export const bumpPct = (val) => String(val ?? "").replace(/\d+(?:\.\d+)?/g, (n) => String(+n + 2.5));
 
 // Supersets: exercises sharing a block letter, in order, become A1, A2; a block of one is just "A".
 export function blockLabels(exercises) {

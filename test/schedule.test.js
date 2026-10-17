@@ -37,3 +37,22 @@ test("percent targets as kg off a 1RM", () => {
   assert.equal(hasPct("7 RPE"), false);
   assert.equal(exKey("  Back  squat "), "back squat");
 });
+
+test("per-set rows", async () => {
+  const { applyRows, rowsOf, rxLine, parseVal, bumpPct, shortRx, dayNum } = await import("../src/schedule.js");
+  const e = { sets: 3, reps: "5", target: "70-75% of 1RM", cue: "" };
+  assert.deepEqual(rowsOf(e), [{ reps: "5", val: "" }, { reps: "5", val: "" }, { reps: "5", val: "" }]);
+  e.metric = "% 1RM";
+  assert.equal(parseVal(e.target, e.metric), "70-75");
+  applyRows(e, [{ reps: "5", val: "75" }, { reps: "5", val: "75" }, { reps: "5", val: "75" }]);
+  assert.equal(rxLine(e), "3 x 5 @ 75% of 1RM");
+  applyRows(e, [{ reps: "5", val: "70" }, { reps: "5", val: "75" }, { reps: "3", val: "80" }, { reps: "1", val: "85" }]);
+  assert.equal(e.sets, 4); assert.equal(e.reps, "5,5,3,1"); assert.equal(e.target, "");
+  assert.equal(rxLine(e), "4 sets: 5 @ 70% of 1RM, 5 @ 75% of 1RM, 3 @ 80% of 1RM, 1 @ 85% of 1RM");
+  assert.equal(shortRx(e), "4 x 5,5,3,1");
+  const w = { metric: "Watts", cue: "" }; applyRows(w, [{ reps: "13", val: "" }, { reps: "13", val: "" }]);
+  assert.equal(rxLine(w), "2 x 13");
+  assert.equal(parseVal("8 RPE", "RPE"), "8"); assert.equal(parseVal("100 kg", "kg"), "100");
+  assert.equal(bumpPct("70-75"), "72.5-77.5");
+  assert.equal(dayNum(1), 1); assert.equal(dayNum(0), 7);
+});
