@@ -277,3 +277,5 @@ table.recs { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.recs caption { text-align: left; padding-bottom: 6px; }
 table.recs th, table.recs td { text-align: left; padding: 8px 10px 8px 0; border-top: 1px solid var(--rule); vertical-align: top; }
 table.recs thead th { font-size: 12px; font-weight: 600; color: var(--muted); border-top: 0; }
+table.board tr.me th, table.board tr.me td { font-weight: 700; }
+.comment { border-left: 2px solid var(--rule); padding-left: 10px; }

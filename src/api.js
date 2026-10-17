@@ -33,7 +33,7 @@ export async function myProfile(uid) {
 
 // RLS decides what comes back: the coach gets everyone, a client gets their own rows and assigned program.
 export async function loadAll() {
-  const [profiles, programs, logs, videos, messages, exercises, maxes, teams] = await Promise.all([
+  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social] = await Promise.all([
     sb.from("profiles").select("*").order("created_at").then(check),
     sb.from("programs").select("*").order("created_at", { ascending: false }).then(check),
     sb.from("logs").select("*").order("date", { ascending: false }).then(check),
@@ -45,11 +45,13 @@ export async function loadAll() {
     sb.from("maxes").select("*").order("exercise").then(check).catch(() => null),
     // Teams arrived with migration 0009.
     sb.from("teams").select("*").order("name").then(check).catch(() => null),
+    // Leaderboards and session comments arrived with migration 0010.
+    sb.from("messages").select("log_id").limit(1).then(check).then(() => true, () => false),
   ]);
   // Labelled breakdown clips arrived with migration 0006; until it's run, one breakdown per video as before.
   return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages, clipsReady: videos.some((v) => "clips" in v),
     exercises: exercises || [], maxes: maxes || [], progReady: !!exercises && !!maxes,
-    teams: teams || [], teamsReady: !!teams };
+    teams: teams || [], teamsReady: !!teams, socialReady: social };
 }
 
 /* ---------- profiles ---------- */
@@ -159,7 +161,9 @@ export async function setMax(person, exercise, kg) {
 /* ---------- chat ---------- */
 export const loadMessages = () => sb.from("messages").select("*").order("created_at").then(check);
 export const sendMessage = (m) =>
-  sb.from("messages").insert({ client_id: m.client_id, body: m.body || "", video_id: m.video_id || null, clip_path: m.clip_path || null }).select().single().then(check);
+  sb.from("messages").insert({ client_id: m.client_id, body: m.body || "", video_id: m.video_id || null, clip_path: m.clip_path || null, ...(m.log_id ? { log_id: m.log_id } : {}) }).select().single().then(check);
+// Each team member's best set per lift (migration 0010).
+export const teamBoard = (team) => sb.rpc("team_board", { team }).then(check);
 export const markRead = (clientId) => sb.rpc("mark_read", { thread: clientId }).then(check);
 // Calls fn with each new message this person is allowed to see, as it's posted.
 export function onMessage(fn) {

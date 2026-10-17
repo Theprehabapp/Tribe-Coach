@@ -35,11 +35,11 @@ export const sendReset = async () => {};
 export const setPassword = async () => {};
 export const signOut = async () => {};
 export const myProfile = async () => meRow;
-export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips"), progReady: true, teamsReady: true });
+export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips"), progReady: true, teamsReady: true, socialReady: true });
 const listeners = [];
 export const onMessage = (fn) => { listeners.push(fn); return () => {}; };
 window.__incoming = (body, video_id = null) => { const m = { id: "m" + Math.random(), client_id: "a", sender_id: role === "coach" ? "a" : "c", body, video_id, clip_path: null, created_at: new Date().toISOString(), read_at: null }; db.messages.push(m); listeners.forEach((f) => f(structuredClone(m))); };
-export const sendMessage = async (m) => { const row = { id: "m" + Math.random(), client_id: role === "coach" ? m.client_id : "a", sender_id: meRow.id, body: m.body || "", video_id: m.video_id || null, clip_path: m.clip_path || null, created_at: new Date().toISOString(), read_at: null }; db.messages.push(row); window.__sent = row; return structuredClone(row); };
+export const sendMessage = async (m) => { const row = { id: "m" + Math.random(), client_id: role === "coach" ? m.client_id : "a", sender_id: meRow.id, body: m.body || "", video_id: m.video_id || null, clip_path: m.clip_path || null, log_id: m.log_id || null, created_at: new Date().toISOString(), read_at: null }; db.messages.push(row); window.__sent = row; return structuredClone(row); };
 export const markRead = async (cid) => { db.messages.forEach((m) => { if (m.client_id === cid && m.sender_id !== meRow.id) m.read_at ||= new Date().toISOString(); }); };
 export const uploadChatClip = async (cid, blob) => { window.__clip = blob; return `${cid}/chat-1.webm`; };
 export const setLibrary = async (id, patch) => { const v = db.videos.find((x) => x.id === id); Object.assign(v, patch); return structuredClone(v); };
@@ -74,3 +74,9 @@ export const setMax = async (person, ex, kg) => { db.maxes = db.maxes.filter((m)
 export const createTeam = async (t) => { const row = { id: "t" + db.teams.length, program_id: null, start_date: null, ...structuredClone(t) }; db.teams.push(row); return structuredClone(row); };
 export const saveTeam = async (id, patch) => { const row = db.teams.find((t) => t.id === id); Object.assign(row, patch); window.__team = structuredClone(row); return structuredClone(row); };
 export const deleteTeam = async (id) => { db.teams = db.teams.filter((t) => t.id !== id); };
+// Same shape as team_board(): best set per athlete per lift, from the fake logs plus two teammates.
+export const teamBoard = async (team) => {
+  const mates = [{ client_id: "m1", athlete: "Jack", exercise: "Back Squat", e1rm: 140, kg: 120, reps: 5, day: "2026-10-04" }, { client_id: "m2", athlete: "Issy", exercise: "Back Squat", e1rm: 100, kg: 90, reps: 3, day: "2026-10-03" }, { client_id: "m1", athlete: "Jack", exercise: "Deadlift", e1rm: 190, kg: 180, reps: 2, day: "2026-10-04" }];
+  const amyBest = {}; db.logs.filter((l) => l.client_id === "a" && l.done).forEach((l) => l.entries.forEach((en) => en.sets.forEach((st) => { const kg = +st.kg, r = +st.reps; if (!(kg > 0 && r > 0 && r <= 12)) return; const e = r === 1 ? kg : Math.round(kg * (1 + r / 30) * 10) / 10; if (!amyBest[en.name] || e > amyBest[en.name].e1rm) amyBest[en.name] = { client_id: "a", athlete: "Amy", exercise: en.name, e1rm: e, kg, reps: r, day: l.date }; })));
+  window.__board = team; return [...mates, ...Object.values(amyBest)];
+};
