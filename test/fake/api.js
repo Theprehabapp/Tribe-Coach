@@ -21,6 +21,11 @@ if (new URLSearchParams(location.search).get("seed")) {
 if (new URLSearchParams(location.search).get("team") && db.programs.length) { db.teams.push({ id: "t-seed", name: "Morning Crew", program_id: "p-seed", start_date: "2026-09-28" }); amy.program_id = null; amy.start_date = null; amy.team_id = "t-seed"; }
 // ?rows=1: this week's Back Squat is prescribed set by set off a %.
 if (new URLSearchParams(location.search).get("rows") && db.programs.length) Object.assign(db.programs[0].weeks[2].days[0].exercises[0], { metric: "% 1RM", sets: 4, reps: "5,3,2,1", target: "", rows: [{ reps: "5", val: "80" }, { reps: "3", val: "85" }, { reps: "2", val: "90" }, { reps: "1", val: "95" }] });
+// ?hist=1: four weeks of Amy's squats and deadlifts, for the progress chart and PRs.
+if (new URLSearchParams(location.search).get("hist")) [["2026-09-14", 100, 140], ["2026-09-21", 105, 145], ["2026-09-28", 102.5, 150], ["2026-10-05", 110, 150]].forEach(([date, sq, dl], i) =>
+  db.logs.push({ id: "h" + i, client_id: "a", program_id: "gone", week: i, day_id: "x", date, done: true, note: "", entries: [
+    { exId: "s", name: "Back Squat", sets: [{ reps: "5", kg: String(sq), rpe: "", done: true }, { reps: "5", kg: String(sq), rpe: "", done: true }] },
+    { exId: "d", name: "Deadlift", sets: [{ reps: "3", kg: String(dl), rpe: "", done: true }] }] }));
 const meRow = role === "coach" ? coach : amy;
 export const getSession = async () => (role === "none" ? null : { user: { id: meRow.id } });
 export const onAuth = () => {};

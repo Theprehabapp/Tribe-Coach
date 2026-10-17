@@ -261,3 +261,19 @@ table.sets input.t { padding: 7px 9px; }
   .ath-row { grid-template-columns: 28px minmax(0, 1fr) auto; row-gap: 4px; }
   .ath-row > :nth-child(n+4) { grid-column: 2 / -1; }
 }
+
+/* Progress chart: one lift, one line in the text colour, recessive grid. */
+.chart { position: relative; margin: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 10px 8px 4px; }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart .gl { stroke: var(--rule); stroke-width: 1; }
+.chart .ax { fill: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.chart .ln { fill: none; stroke: var(--fg); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .pt { fill: var(--fg); stroke: var(--surface); stroke-width: 2; }
+.chart .hit { fill: transparent; cursor: pointer; }
+.chart .lbl { fill: var(--fg); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.chart .tip { position: absolute; transform: translate(-50%, -100%); background: var(--fg); color: var(--bg); font-size: 13px; padding: 6px 10px; border-radius: 8px; white-space: nowrap; pointer-events: none; }
+.tbl { overflow-x: auto; }
+table.recs { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.recs caption { text-align: left; padding-bottom: 6px; }
+table.recs th, table.recs td { text-align: left; padding: 8px 10px 8px 0; border-top: 1px solid var(--rule); vertical-align: top; }
+table.recs thead th { font-size: 12px; font-weight: 600; color: var(--muted); border-top: 0; }
