@@ -56,6 +56,7 @@ export const listRefs = async () => structuredClone(refs);
 export const uploadRef = async (cid, file, label) => { const r = { path: `c/ref-${refs.length}`, label }; refs.unshift(r); window.__ref = file; return r; };
 export const deleteRef = async (path) => { refs.splice(refs.findIndex((r) => r.path === path), 1); };
 export const cleanupVideos = async () => 0;
+export const videoBlob = async () => (await fetch(new URL("./sample.webm", import.meta.url))).blob();
 export const videoBlobUrl = async () => URL.createObjectURL(await (await fetch(new URL("./sample.webm", import.meta.url))).blob());
 export const uploadBreakdown = async (v, blob) => { window.__breakdown = blob; return { ...v, review_path: "a/review.webm" }; };
 export const addClip = async (v, blob, label) => { window.__breakdown = blob; const row = db.videos.find((x) => x.id === v.id); row.clips = [...(v.clips || []), { path: `a/review-${row.clips.length}.webm`, label }]; return structuredClone(row); };
