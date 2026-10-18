@@ -223,10 +223,37 @@ function hydrateVideos() {
       const v = document.createElement("video");
       v.src = url; v.controls = true; v.playsInline = true; v.preload = "metadata";
       box.textContent = ""; box.appendChild(v);
+      if (box.nextElementSibling?.dataset.act !== "save-vid")
+        box.insertAdjacentHTML("afterend", `<button class="link small save-vid" data-act="save-vid" data-path="${esc(box.dataset.video)}">Save video</button>`);
     } catch (e) {
       box.className = "vid placeholder"; box.textContent = "Couldn't load this video.";
     }
   });
+}
+// On a phone the share sheet is the only route to the camera roll (iPhone has no download in its
+// video controls). Sharing has to follow a tap closely, so a slow download asks for a second tap.
+const saved = new Map();
+async function saveVideo(b) {
+  const path = b.dataset.path;
+  let file = saved.get(path);
+  if (!file) {
+    b.disabled = true; b.textContent = "Saving";
+    try {
+      const blob = await api.videoBlob(path), ext = path.split(".").pop() || "mp4";
+      file = new File([blob], `tribe-${path.split("/").pop().replace(/\.[^.]*$/, "")}.${ext}`, { type: blob.type || `video/${ext === "mov" ? "quicktime" : ext}` });
+      saved.set(path, file);
+    } catch (e) { console.error(e); return toast("Couldn't download this video. Check your connection and try again."); } finally { b.disabled = false; b.textContent = "Save video"; }
+  }
+  if (matchMedia("(pointer: coarse)").matches && navigator.canShare?.({ files: [file] })) {
+    try { return await navigator.share({ files: [file] }); } catch (e) {
+      if (e.name === "AbortError") return;
+      if (e.name === "NotAllowedError") { b.textContent = "Tap again to save"; return; }
+    }
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(file); a.download = file.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
 }
 const verdictChip = (v) => ({ good: '<span class="chip green">Good to go</span>', tweak: '<span class="chip accent">Small fix</span>', refilm: '<span class="chip red">Re-film it</span>' })[v] || "";
 
@@ -1073,6 +1100,7 @@ document.addEventListener("click", async (ev) => {
     case "cmp-toggle": ui.cmpOpen = !ui.cmpOpen; paintCompare(); break;
     case "cmp-pick": pickCompare(b.dataset.path, b.dataset.label); break;
     case "cmp-clear": if (bd?.setCompare(null)) cmpState("Put an earlier rep or a reference rep beside this one."); else toast("Stop recording first."); break;
+    case "save-vid": saveVideo(b); break;
     case "clip-play": {
       const box = document.getElementById("clip-watch");
       if (box) { box.innerHTML = `<div class="vid wide" data-video="${esc(b.dataset.path)}">Loading breakdown</div>`; hydrateVideos(); }

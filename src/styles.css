@@ -279,3 +279,4 @@ table.recs th, table.recs td { text-align: left; padding: 8px 10px 8px 0; border
 table.recs thead th { font-size: 12px; font-weight: 600; color: var(--muted); border-top: 0; }
 table.board tr.me th, table.board tr.me td { font-weight: 700; }
 .comment { border-left: 2px solid var(--rule); padding-left: 10px; }
+.save-vid { margin-top: 6px; }

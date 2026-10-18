@@ -105,7 +105,10 @@ export async function uploadBreakdown(video, blob) {
 
 // The breakdown tool draws video frames onto a canvas, so it needs a same-origin copy of the file.
 export async function videoBlobUrl(path) {
-  return URL.createObjectURL(check(await sb.storage.from(BUCKET).download(path)));
+  return URL.createObjectURL(await videoBlob(path));
+}
+export async function videoBlob(path) {
+  return check(await sb.storage.from(BUCKET).download(path));
 }
 
 const urlCache = new Map();
