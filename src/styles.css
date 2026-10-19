@@ -280,3 +280,5 @@ table.recs thead th { font-size: 12px; font-weight: 600; color: var(--muted); bo
 table.board tr.me th, table.board tr.me td { font-weight: 700; }
 .comment { border-left: 2px solid var(--rule); padding-left: 10px; }
 .save-vid { margin-top: 6px; }
+.feedback p { white-space: pre-line; }
+.section-tag { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 14px 0 -4px; }

@@ -482,7 +482,8 @@ function exBlock(e, di, ei, label) {
     <p class="rx" id="rx-${e.id}">${esc(rxLine(e))}</p>
     <div class="exb-grid"><div class="stack">
       <label class="f">Exercise instructions<textarea class="t" id="x-note-${e.id}" data-input="ex" data-k="note" ${attrs} placeholder="Warm up, tempo, what to log.">${esc(e.note)}</textarea></label>
-      <div class="grid2">${fld("Cue (in brackets)", "cue", e, di, ei)}${fld("Rest", "rest", e, di, ei, "", "text", "Rest 3-4 minutes between sets")}</div></div>
+      <div class="grid2">${fld("Cue (in brackets)", "cue", e, di, ei)}${fld("Rest", "rest", e, di, ei, "", "text", "Rest 3-4 minutes between sets")}</div>
+      <div class="grid2">${fld("Block heading", "section", e, di, ei, "", "text", "STRENGTH/POWER or EMOM X 12 MINUTES")}${fld("Scoring", "score", e, di, ei, "", "text", "(FOR REPS) or (TEST) (FOR WATTS)")}</div></div>
     <div class="stack"><table class="sets"><thead><tr><th class="num">${rows.length} sets</th><th>Reps</th><th><select class="t mini" id="x-metric-${e.id}" data-change="metric" ${attrs} aria-label="Target per set">${METRICS.map((m) => `<option value="${m}"${(e.metric || "") === m ? " selected" : ""}>${m || "No column"}</option>`).join("")}</select></th><th></th></tr></thead>
       <tbody>${rows.map((r, ri) => `<tr><td class="num muted">${ri + 1}</td><td><input class="t num" id="r-${e.id}-${ri}-reps" data-input="row" data-f="reps" data-r="${ri}" ${attrs} value="${esc(r.reps)}" aria-label="Set ${ri + 1} reps"></td>
         <td>${on ? `<input class="t num" id="r-${e.id}-${ri}-val" data-input="row" data-f="val" data-r="${ri}" ${attrs} value="${esc(r.val)}" aria-label="Set ${ri + 1} ${esc(e.metric)}">` : ""}</td>
@@ -947,9 +948,9 @@ function vLog() {
     const en = l.entries.find((x) => x.exId === e.id) || (l.entries[ei] = { exId: e.id, sets: [{ reps: "", kg: "", rpe: "", done: false }] });
     const ins = [e.note, e.rest].filter(Boolean).join("\n");
     const lb = labels[ei], mates = lb && /\d$/.test(lb) ? labels.filter((x) => x && x[0] === lb[0]) : [];
-    out += `<section class="card${mates.length ? " superset" : ""}"><div class="row spread"><h3>${lb ? `<span class="blk">${lb}</span> ` : ""}${esc(e.name)}</h3><button class="link small" data-act="film" data-ex="${esc(e.name)}">Film a set</button></div>
+    out += `${e.section ? `<div class="section-tag"><span class="kicker">${esc(e.section)}</span>${e.score ? `<span class="chip">${esc(e.score)}</span>` : ""}</div>` : ""}<section class="card${mates.length ? " superset" : ""}"><div class="row spread"><h3>${lb ? `<span class="blk">${lb}</span> ` : ""}${esc(e.name)}</h3><button class="link small" data-act="film" data-ex="${esc(e.name)}">Film a set</button></div>
       ${mates.length && lb.endsWith("1") ? `<p class="small muted">Superset: do ${mates.join(" and ")} back to back, then rest.</p>` : ""}
-      <p class="rx">${esc(rxLine(e))}</p>${loadLine(me.id, e)}${ins ? `<p class="ins">${esc(ins)}</p>` : ""}${demoBit(e.name)}
+      ${rxLine(e) ? `<p class="rx">${esc(rxLine(e))}</p>` : ""}${loadLine(me.id, e)}${ins ? `<p class="ins">${esc(ins)}</p>` : ""}${demoBit(e.name)}
       <div class="colhead"><span>Set</span><span>Reps</span><span>kg</span><span>RPE</span><span></span></div>
       ${en.sets.map((s, si) => `<div class="setrow"><span class="n num">${si + 1}</span>${["reps", "kg", "rpe"].map((f) =>
         `<input class="t num" id="s-${e.id}-${si}-${f}" inputmode="decimal" aria-label="Set ${si + 1} ${f}" data-input="set" data-ex="${e.id}" data-s="${si}" data-f="${f}" value="${esc(s[f])}" placeholder="${esc(setHint(e, si, f))}">`).join("")}
