@@ -292,7 +292,7 @@ function vReview() {
     <section class="hero"><div class="kicker">${esc(c?.name || "Client")}, library</div><h1>${esc(v.exercise)}</h1>
     <div class="row">${v.status === "waiting" ? '<span class="chip">Waiting for review</span>' : verdictChip(v.verdict)}<span class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</span></div>
     ${v.feedback ? `<p class="small">Your feedback: ${esc(v.feedback)}</p>` : ""}</section>
-    <div class="row"><button class="btn small" data-act="cmp-toggle" id="cmp-btn">Compare</button><span class="small muted" id="cmp-state">Put an earlier rep or a reference rep beside this one.</span></div>
+    <div class="row"><button class="btn small" data-act="cmp-toggle" id="cmp-btn">Compare</button><span class="small muted" id="cmp-state">Put an earlier rep or one of your reference reps beside or over this one.</span></div>
     <div id="cmp-pick" class="card stack" hidden></div>
     <div id="bd-root" class="bd"><div class="empty">Loading video</div></div>
     <p class="small muted">${D.chatReady ? `Record and save a breakdown and it's sent to ${esc(c?.name || "them")} in your chat.` : "Saving a breakdown here replaces the one on this video."}</p>`;
@@ -300,7 +300,7 @@ function vReview() {
     <section class="hero"><div class="kicker">${esc(c?.name || "Client")}${p ? `, ${esc(p.name)}${w >= 0 ? ` week ${w + 1}` : ""}` : ""}</div><h1>${esc(v.exercise)}</h1>
     <div class="row"><span class="chip${left.overdue ? " red" : ""}">${left.label}</span><span class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</span></div>
     ${v.note ? `<p>"${esc(v.note)}"</p>` : '<p class="small muted">No note from the client.</p>'}</section>
-    <div class="row"><button class="btn small" data-act="cmp-toggle" id="cmp-btn">Compare</button><span class="small muted" id="cmp-state">Put an earlier rep or a reference rep beside this one.</span></div>
+    <div class="row"><button class="btn small" data-act="cmp-toggle" id="cmp-btn">Compare</button><span class="small muted" id="cmp-state">Put an earlier rep or one of your reference reps beside or over this one.</span></div>
     <div id="cmp-pick" class="card stack" hidden></div>
     <div id="bd-root" class="bd"><div class="empty">Loading video</div></div>
     <p class="small muted">To send a breakdown: tap Record, then play, slow down, pause and draw while you talk. Everything on screen and your voice go into one video for ${esc(c?.name || "your client")}.${D.clipsReady ? " Cover one point per recording and label it; they all go out together when you send." : ""}</p>
@@ -393,7 +393,7 @@ async function pickCompare(path, label) {
   try {
     const url = await api.videoBlobUrl(path);
     if (!bd || !bd.setCompare(url, label)) { URL.revokeObjectURL(url); cmpState(""); return; }
-    cmpState(`Comparing with <strong>${esc(label)}</strong>. Line the reps up with Left and Right, then play Both. <button class="link" data-act="cmp-clear">Remove</button>`, true);
+    cmpState(`Comparing with <strong>${esc(label)}</strong>. Line the reps up one at a time, then play Both. Tap Overlay to lay it over this video instead. <button class="link" data-act="cmp-clear">Remove</button>`, true);
   } catch (e) { cmpState(`Couldn't load that video: ${esc(e.message || e)}`); }
 }
 async function addRef(file) {
@@ -1100,7 +1100,7 @@ document.addEventListener("click", async (ev) => {
     }
     case "cmp-toggle": ui.cmpOpen = !ui.cmpOpen; paintCompare(); break;
     case "cmp-pick": pickCompare(b.dataset.path, b.dataset.label); break;
-    case "cmp-clear": if (bd?.setCompare(null)) cmpState("Put an earlier rep or a reference rep beside this one."); else toast("Stop recording first."); break;
+    case "cmp-clear": if (bd?.setCompare(null)) cmpState("Put an earlier rep or one of your reference reps beside or over this one."); else toast("Stop recording first."); break;
     case "save-vid": saveVideo(b); break;
     case "clip-play": {
       const box = document.getElementById("clip-watch");
