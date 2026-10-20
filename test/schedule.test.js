@@ -19,6 +19,9 @@ test("week index and session dates", () => {
 
 test("prescription line and % creep", () => {
   assert.equal(rxLine({ sets: 4, reps: "8.8", target: "7 RPE", cue: "single arm" }), "4 x 8.8 @ 7 RPE (single arm)");
+  assert.equal(rxLine({ sets: 5, reps: "5:00m:s" }), "5 x 5:00m:s");
+  assert.equal(rxLine({ sets: 10, reps: "" }), "10 sets");
+  assert.equal(rxLine({ sets: "", reps: "" }), "");
   assert.equal(bumpTarget("70-75% of 1RM"), "72.5-77.5% of 1RM");
   assert.equal(bumpTarget("7 RPE"), "7 RPE");
 });

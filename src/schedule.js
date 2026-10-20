@@ -71,10 +71,15 @@ export function parseVal(target, metric) {
 export function rxLine(e) {
   const cue = e.cue ? " (" + e.cue + ")" : "";
   if (varied(e)) return `${e.rows.length} sets: ${e.rows.map((r) => `${String(r.reps).trim()}${String(r.val ?? "").trim() ? " @ " + valText(r.val, e.metric) : ""}`).join(", ")}${cue}`;
-  return `${e.sets} x ${e.reps}${e.target ? " @ " + e.target : ""}${cue}`;
+  return `${countRx(e)}${e.target ? " @ " + e.target : ""}${cue}`.trim();
 }
+// "3 x 13", "10 sets" when there's no rep count, nothing for a block that's all instructions (an EMOM, a flow).
+const countRx = (e) => {
+  const sets = String(e.sets ?? "").trim(), reps = String(e.reps ?? "").trim();
+  return reps ? `${sets || 1} x ${reps}` : sets ? `${sets} ${sets === "1" ? "set" : "sets"}` : "";
+};
 // Short form for the program grid: "3 x 13".
-export const shortRx = (e) => `${e.sets} x ${e.reps}`;
+export const shortRx = (e) => countRx(e);
 // Day 1 is Monday, Day 7 Sunday, matching a Monday start date.
 export const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 export const dayNum = (dow) => ((dow + 6) % 7) + 1;
