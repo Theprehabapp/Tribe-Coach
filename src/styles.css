@@ -284,3 +284,5 @@ table.board tr.me th, table.board tr.me td { font-weight: 700; }
 .section-tag { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 14px 0 -4px; }
 .bd-range { display: inline-flex; align-items: center; gap: 6px; }
 .bd-range input { width: 110px; accent-color: var(--fg); }
+.clipbar { position: sticky; top: 0; z-index: 5; background: var(--surface-2); border: 1px solid var(--rule); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
+.pg-add.paste { font-size: 13px; font-weight: 600; color: var(--fg); border-style: solid; }

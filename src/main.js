@@ -42,6 +42,20 @@ const libraryPrograms = () => D.programs.filter((p) => !p.owner_id);
 // Exercise library entry and an athlete's 1RM for an exercise name, matched loosely.
 const libFor = (name) => D.exercises.find((x) => exKey(x.name) === exKey(name));
 const maxFor = (cid, name) => D.maxes.find((m) => m.client_id === cid && exKey(m.exercise) === exKey(name));
+// Copy and paste between programs: one week, one session or one block (all exercises sharing a letter).
+// Kept in this browser so it survives switching programs or reloading.
+const CLIP_KEY = "tribe-clip";
+const clip = {
+  get() { try { return JSON.parse(localStorage.getItem(CLIP_KEY) || "null"); } catch { return null; } },
+  set(c) { try { c ? localStorage.setItem(CLIP_KEY, JSON.stringify(c)) : localStorage.removeItem(CLIP_KEY); } catch {} },
+};
+// A pasted copy gets new ids so it never shares logs or edits with the original.
+const freshDay = (d) => ({ ...structuredClone(d), id: newId(), exercises: d.exercises.map((x) => ({ ...structuredClone(x), id: newId() })) });
+const freshWeek = (w) => ({ ...structuredClone(w), days: w.days.map(freshDay) });
+function clipBar() {
+  const c = clip.get();
+  return c ? `<div class="clipbar row spread"><span class="small">Copied: <strong>${esc(c.label)}</strong>. ${{ week: "Paste it after any week, in this program or another.", session: "Paste it on any day with Paste, in this program or another.", block: "Open any session and tap Paste block." }[c.kind]}</span><button class="link small" data-act="clip-clear">Clear</button></div>` : "";
+}
 const nextBlock = (exs) => { const last = exs.map((e) => String(e.block || "").trim().toUpperCase()).filter(Boolean).pop(); return last ? String.fromCharCode(Math.min(90, last.charCodeAt(0) + 1)) : "A"; };
 // Breakdown clips on a video, oldest first: one from before labels (review_path), then the labelled ones.
 const clipsOf = (v) => [...(v.review_path ? [{ path: v.review_path, label: "Breakdown" }] : []), ...(v.clips || [])];
@@ -430,19 +444,20 @@ function vProgramEdit() {
   const p = program(ui.programId);
   if (!p) { ui.view = null; return vPrograms(); }
   if (!p.weeks.length) p.weeks.push({ days: [] });
-  let out = `<div class="row"><button class="link" data-act="back">${p.owner_id ? "Back to athlete" : "Back to programs"}</button><span class="small muted" id="save-state"></span></div>
+  const cb = clip.get();
+  let out = `${clipBar()}<div class="row"><button class="link" data-act="back">${p.owner_id ? "Back to athlete" : "Back to programs"}</button><span class="small muted" id="save-state"></span></div>
     <section class="stack"><div class="kicker">${p.owner_id ? `Program just for ${esc(profile(p.owner_id)?.name || "one athlete")}` : "Program"}</div>
     <div class="grid2"><label class="f">Name<input class="t" id="p-name" data-input="p-name" value="${esc(p.name)}"></label>
     <label class="f">Description<input class="t" id="p-note" data-input="p-note" value="${esc(p.note)}"></label></div>
     <p class="small muted">${p.weeks.length} week${p.weeks.length === 1 ? "" : "s"}. Tap a session to edit it, or + to add one on that day. Day 1 is Monday.</p></section>
     <div class="pgrid-wrap"><div class="pgrid">${DAY_ORDER.map((dow) => `<div class="pg-head">Day ${dayNum(dow)} <span class="muted">${DOW_LONG[dow].slice(0, 3)}</span></div>`).join("")}`;
   p.weeks.forEach((w, wi) => {
-    out += `<div class="pg-week"><h2>Week ${wi + 1}</h2><span class="row"><button class="btn small" data-act="dup-week" data-w="${wi}">Copy to new week</button>${p.weeks.length > 1 ? `<button class="btn small danger" data-act="del-week" data-w="${wi}">Delete</button>` : ""}</span></div>`;
+    out += `<div class="pg-week"><h2>Week ${wi + 1}</h2><span class="row"><button class="btn small" data-act="dup-week" data-w="${wi}">Copy to new week</button><button class="btn small" data-act="clip-week" data-w="${wi}">Copy week</button>${cb?.kind === "week" ? `<button class="btn small primary" data-act="paste-week" data-w="${wi}">Paste after</button>` : ""}${p.weeks.length > 1 ? `<button class="btn small danger" data-act="del-week" data-w="${wi}">Delete</button>` : ""}</span></div>`;
     out += DAY_ORDER.map((dow) => `<div class="pg-cell">${w.days.filter((d) => d.dow === dow).map((d) => sessCard(wi, d)).join("")}
-      <button class="pg-add" data-act="sess-add" data-w="${wi}" data-dow="${dow}" aria-label="Add a session to week ${wi + 1} day ${dayNum(dow)}">+</button></div>`).join("");
+      <button class="pg-add" data-act="sess-add" data-w="${wi}" data-dow="${dow}" aria-label="Add a session to week ${wi + 1} day ${dayNum(dow)}">+</button>${cb?.kind === "session" ? `<button class="pg-add paste" data-act="paste-sess" data-w="${wi}" data-dow="${dow}" aria-label="Paste ${esc(cb.label)} into week ${wi + 1} day ${dayNum(dow)}">Paste</button>` : ""}</div>`).join("");
   });
   out += `</div></div>
-    <div class="row"><button class="btn" data-act="add-week">Add a blank week</button></div>
+    <div class="row"><button class="btn" data-act="add-week">Add a blank week</button>${cb?.kind === "week" ? `<button class="btn primary" data-act="paste-week" data-w="${p.weeks.length - 1}">Paste ${esc(cb.label)} at the end</button>` : ""}</div>
     <div class="row">${ui.confirmDelProgram ? '<span>Delete this program? Clients on it lose their sessions.</span><button class="btn small primary" data-act="del-program-yes">Delete</button><button class="btn small" data-act="del-program-no">Keep it</button>' : '<button class="btn small danger" data-act="del-program">Delete program</button>'}</div>`;
   return out;
 }
@@ -452,13 +467,14 @@ function vSession() {
   const p = program(ui.programId), s = ui.sess;
   if (!p || !s || !p.weeks[s.w]) { ui.view = p ? "program" : null; return p ? vProgramEdit() : vPrograms(); }
   const wk = p.weeks[s.w], day = wk.days.find((d) => d.id === s.id), dow = day ? day.dow : s.dow, di = wk.days.indexOf(day);
-  const sameDay = wk.days.filter((d) => d.dow === dow);
+  const sameDay = wk.days.filter((d) => d.dow === dow), cb = clip.get();
   const cal = p.weeks.map((w, wi) => `<div class="cal-wk"><span class="kicker">Week ${wi + 1}</span><div class="cal-row">${DAY_ORDER.map((dd) => {
     const n = w.days.filter((d) => d.dow === dd).length;
     return `<button class="cal-d num" data-act="sess-day" data-w="${wi}" data-dow="${dd}"${wi === s.w && dd === dow ? ' aria-current="true"' : ""} aria-label="Week ${wi + 1} day ${dayNum(dd)}, ${n} session${n === 1 ? "" : "s"}">${wi * 7 + dayNum(dd)}<span class="dots">${"&bull;".repeat(Math.min(n, 3))}</span></button>`; }).join("")}</div></div>`).join("");
   let out = `<div class="sess-layout"><aside class="sess-side"><div class="cal">${cal}</div>
     <div class="stack"><h2>Day ${s.w * 7 + dayNum(dow)}</h2>${sameDay.map((d) => sessCard(s.w, d, d === day)).join("")}
-    <button class="btn small" data-act="sess-add" data-w="${s.w}" data-dow="${dow}">Add ${sameDay.length ? "another" : "a"} session</button></div></aside><div class="sess-main stack">
+    <button class="btn small" data-act="sess-add" data-w="${s.w}" data-dow="${dow}">Add ${sameDay.length ? "another" : "a"} session</button>
+    ${cb?.kind === "session" ? `<button class="btn small primary" data-act="paste-sess" data-w="${s.w}" data-dow="${dow}">Paste ${esc(cb.label)} here</button>` : ""}</div></aside><div class="sess-main stack">${clipBar()}
     <div class="row spread"><button class="link" data-act="back">Back to program</button><span class="small muted" id="save-state"></span></div>
     <h1>Week ${s.w + 1} Day ${dayNum(dow)}</h1>`;
   if (!day) return out + `<div class="empty">No session on this day.</div></div></div>`;
@@ -467,9 +483,9 @@ function vSession() {
     <label class="f">Coach instructions<textarea class="t tall" id="d-note-${day.id}" data-input="d-note" data-d="${di}" placeholder="Framing for the session: what to chase, what to log.">${esc(day.coachNote)}</textarea></label></section>`;
   const labels = blockLabels(day.exercises);
   day.exercises.forEach((e, ei) => { out += exBlock(e, di, ei, labels[ei]); });
-  out += `<div class="row"><button class="btn" data-act="ex-add" data-d="${di}">Add exercise</button></div>
+  out += `<div class="row"><button class="btn" data-act="ex-add" data-d="${di}">Add exercise</button>${cb?.kind === "block" ? `<button class="btn primary" data-act="paste-block" data-d="${di}">Paste ${esc(cb.label)}</button>` : ""}</div>
     <p class="small muted">Block: give exercises the same letter to superset them (A1, A2). Pick a column (kg, % 1RM, RPE, watts...) to set a target per set. Exercise names come from your exercise library.</p>
-    <div class="row"><button class="btn small" data-act="sess-dup" data-d="${di}">Duplicate session</button><button class="btn small danger" data-act="sess-del" data-d="${di}">Delete session</button></div>
+    <div class="row"><button class="btn small" data-act="sess-dup" data-d="${di}">Duplicate session</button><button class="btn small" data-act="clip-sess" data-d="${di}">Copy session</button><button class="btn small danger" data-act="sess-del" data-d="${di}">Delete session</button></div>
     <datalist id="streams">${STREAMS.map((x) => `<option value="${x}">`).join("")}</datalist>
     <datalist id="ex-lib">${D.exercises.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist></div></div>`;
   return out;
@@ -478,7 +494,7 @@ function exBlock(e, di, ei, label) {
   const rows = rowsOf(e), on = !!e.metric, attrs = `data-d="${di}" data-e="${ei}"`;
   return `<section class="exb"><div class="exb-lb" id="blk-${e.id}">${label || ""}</div><div class="stack">
     <div class="exb-top">${fld("Exercise", "name", e, di, ei, "wide")}${fld("Block", "block", e, di, ei, "blkf", "text", "A")}
-      <span class="row"><button class="btn small ghost" data-act="ex-up" ${attrs}${ei ? "" : " disabled"}>Up</button><button class="btn small danger" data-act="ex-del" ${attrs}>Remove</button></span></div>
+      <span class="row"><button class="btn small ghost" data-act="clip-block" ${attrs}>Copy block</button><button class="btn small ghost" data-act="ex-up" ${attrs}${ei ? "" : " disabled"}>Up</button><button class="btn small danger" data-act="ex-del" ${attrs}>Remove</button></span></div>
     <p class="rx" id="rx-${e.id}">${esc(rxLine(e))}</p>
     <div class="exb-grid"><div class="stack">
       <label class="f">Exercise instructions<textarea class="t" id="x-note-${e.id}" data-input="ex" data-k="note" ${attrs} placeholder="Warm up, tempo, what to log.">${esc(e.note)}</textarea></label>
@@ -1195,6 +1211,43 @@ document.addEventListener("click", async (ev) => {
       toast(`Copied to week ${wi + 2}. Percentages moved up 2.5% and calibration notes changed to adding load. Check each line.`);
     }); break;
     case "add-week": progEdit(() => p.weeks.push({ days: [] })); break;
+    case "clip-week": {
+      const wi = +b.dataset.w;
+      clip.set({ kind: "week", label: `Week ${wi + 1} of ${p.name}`, data: p.weeks[wi] }); render();
+      toast(`Week ${wi + 1} copied. Open any program and tap Paste after.`); break;
+    }
+    case "clip-sess": {
+      const x = wk.days[d];
+      clip.set({ kind: "session", label: `${x.name || "Session"} (week ${ui.week + 1} day ${dayNum(x.dow)})`, data: x }); render();
+      toast("Session copied. Tap Paste on any day, in any program."); break;
+    }
+    case "clip-block": {
+      const exs = wk.days[d].exercises, key = String(exs[e].block || "").trim().toUpperCase();
+      const part = key ? exs.filter((x) => String(x.block || "").trim().toUpperCase() === key) : [exs[e]];
+      const title = part[0].section || part.map((x) => x.name).filter(Boolean).join(" + ") || "exercise";
+      clip.set({ kind: "block", label: `block ${key || ""} ${title}`.replace(/\s+/g, " ").trim(), data: part }); render();
+      toast(`Copied ${part.length > 1 ? `${part.length} exercises` : "1 exercise"}. Open any session and tap Paste block.`); break;
+    }
+    case "clip-clear": clip.set(null); render(); break;
+    case "paste-week": {
+      const c = clip.get(); if (c?.kind !== "week") return;
+      const wi = +b.dataset.w;
+      progEdit(() => p.weeks.splice(wi + 1, 0, freshWeek(c.data)));
+      toast(`Pasted as week ${wi + 2}.`); break;
+    }
+    case "paste-sess": {
+      const c = clip.get(); if (c?.kind !== "session") return;
+      const wi = +b.dataset.w, day = { ...freshDay(c.data), dow: +b.dataset.dow };
+      p.weeks[wi].days.push(day);
+      go(() => { ui.week = wi; ui.sess = { w: wi, id: day.id }; ui.view = "session"; }); saveProgramSoon(); scrollTo(0, 0);
+      toast("Pasted. You're editing the copy."); break;
+    }
+    case "paste-block": {
+      const c = clip.get(); if (c?.kind !== "block") return;
+      const exs = wk.days[d].exercises, letter = c.data[0].block ? nextBlock(exs) : "";
+      progEdit(() => exs.push(...c.data.map((x) => ({ ...structuredClone(x), id: newId(), block: letter }))));
+      toast(letter ? `Pasted as block ${letter}.` : "Pasted."); break;
+    }
     case "del-week": {
       const wi = +b.dataset.w;
       if (p.weeks[wi].days.length && !confirm(`Delete week ${wi + 1} and its ${p.weeks[wi].days.length} sessions?`)) return;
