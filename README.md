@@ -107,6 +107,7 @@ Run `supabase/migrations/0010_leaderboards_comments.sql` to switch on leaderboar
 
 - **Supersets:** each exercise has a **Block** letter. Exercises sharing a letter are a superset and show as A1, A2 (a block of one is just "A"). New exercises get the next letter, so set the same letter to pair them.
 - **1RMs:** each athlete has a list of 1RMs (on their profile for you, under **Log** for them). A percentage target such as `70-75% of 1RM` then shows as kilograms in their session, rounded to 2.5 kg. If a lift has no 1RM yet, the session offers a box to add it.
+- **PR board:** each athlete's profile (and their **Log** tab) has a PRs section: Strength and Olympic lifting 1RMs in kg (the same 1RMs percentages use), max unbroken gymnastics sets, and benchmark workouts (Fran, Grace, Murph, Cindy, 2k Row and so on). Either of you can fill it in; clearing a box removes it, and **Add** covers anything not listed. Run `supabase/migrations/0011_prs.sql` to switch on the gymnastics and benchmark parts.
 - **Exercise library:** Programs, then **Exercise library**. Add a demo as a link (YouTube, Instagram) or an uploaded video, plus cues. Athletes get a **Watch demo** button wherever that exercise is programmed. Names are matched ignoring capitals and spaces.
 
 Run `supabase/migrations/0008_programming.sql` in the SQL Editor to switch on the library and 1RMs. Supersets work without it.
