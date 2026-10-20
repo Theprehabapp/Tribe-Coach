@@ -282,3 +282,5 @@ table.board tr.me th, table.board tr.me td { font-weight: 700; }
 .save-vid { margin-top: 6px; }
 .feedback p { white-space: pre-line; }
 .section-tag { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 14px 0 -4px; }
+.bd-range { display: inline-flex; align-items: center; gap: 6px; }
+.bd-range input { width: 110px; accent-color: var(--fg); }

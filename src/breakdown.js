@@ -5,8 +5,9 @@
 // captures that canvas plus the microphone, so whatever the coach does while recording (play,
 // pause, scrub, draw) ends up in the file.
 //
-// Compare puts a second clip beside the first (an earlier rep, or a reference rep). Each side can be
-// lined up on its own, then both played together.
+// Compare puts a second clip beside the first (an earlier rep, or a reference rep), or over it as a
+// see-through overlay the coach can move and size to match. Each clip can be lined up in time on its
+// own, then both played together.
 
 const COLORS = [["#E4572E", "Red"], ["#FFFFFF", "White"], ["#3FB8F0", "Blue"]];
 const TOOLS = [["pen", "Pen"], ["line", "Line"], ["circle", "Circle"], ["angle", "Angle"]];
@@ -32,7 +33,13 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
       <span class="bd-time num small muted" data-bd-time>0:00</span>
     </div>
     <div class="bd-bar" data-bd-targets hidden><span class="small muted">Controls move</span>
-      <div class="seg" role="group" aria-label="Which video the controls move">${[["0", "Left"], ["1", "Right"], ["both", "Both"]].map(([k, l]) => `<button data-bd="target" data-v="${k}" aria-pressed="${k === "both"}">${l}</button>`).join("")}</div></div>
+      <div class="seg" role="group" aria-label="Which video the controls move">${[["0", "Left"], ["1", "Right"], ["both", "Both"]].map(([k, l]) => `<button data-bd="target" data-v="${k}" aria-pressed="${k === "both"}">${l}</button>`).join("")}</div>
+      <div class="seg" role="group" aria-label="Layout">${[["side", "Side by side"], ["overlay", "Overlay"]].map(([k, l]) => `<button data-bd="mode" data-v="${k}" aria-pressed="${k === "side"}">${l}</button>`).join("")}</div></div>
+    <div class="bd-bar" data-bd-ov hidden>
+      <label class="bd-range small muted">See-through<input type="range" min="15" max="85" value="50" data-bd-alpha aria-label="Overlay see-through"></label>
+      <label class="bd-range small muted">Size<input type="range" min="40" max="200" value="100" data-bd-size aria-label="Overlay size"></label>
+      <button class="btn small" data-bd="move" aria-pressed="false">Move overlay</button>
+      <button class="btn small ghost" data-bd="ov-reset">Reset</button></div>
     <input class="bd-scrub" type="range" min="0" max="1000" value="0" step="1" aria-label="Position in video" data-bd-scrub>
     <div class="bd-bar">
       <div class="seg" role="group" aria-label="Speed">${SPEEDS.map((s) => `<button data-bd="speed" data-v="${s}" aria-pressed="${s === 1}">${s === 1 ? "1x" : s === 0.5 ? "½x" : "¼x"}</button>`).join("")}</div>
@@ -48,7 +55,7 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
 
   const $ = (sel) => root.querySelector(sel);
   const canvas = $(".bd-canvas"), ctx = canvas.getContext("2d");
-  const st = { tool: "line", color: COLORS[0][0], shapes: [], drawing: null, rec: null, mic: null, chunks: [], recStart: 0, result: null, resultUrl: null, saved: false, raf: 0, dead: false, target: "both" };
+  const st = { tool: "line", color: COLORS[0][0], shapes: [], drawing: null, rec: null, mic: null, chunks: [], recStart: 0, result: null, resultUrl: null, saved: false, raf: 0, dead: false, target: "both", mode: "side", ov: { alpha: 0.5, scale: 1, dx: 0, dy: 0 }, moving: false, drag: null };
   const W = () => canvas.width, H = () => canvas.height;
 
   // vids[0] is the clip under review, vids[1] the optional compare clip. x/y/w/h is where each sits on the canvas.
@@ -68,9 +75,24 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
   // The videos the transport controls move: just the main clip, or whichever side is picked when comparing.
   const targets = () => (vids.length < 2 ? [vids[0]] : st.target === "both" ? vids : [vids[+st.target]]).map((v) => v.el);
 
+  const overlaid = () => st.mode === "overlay" && vids.length > 1;
   function layout() {
     const ready = vids.filter((v) => v.el.videoWidth);
     if (!ready.length) return;
+    if (overlaid()) {
+      // The canvas is the clip under review; the compare clip sits on top, fitted inside it, then sized and moved by the coach.
+      const [a, b] = vids;
+      if (!a.el.videoWidth) return;
+      const k = Math.min(1, MAX_SIDE / Math.max(a.el.videoWidth, a.el.videoHeight));
+      const cw = even(a.el.videoWidth * k), ch = even(a.el.videoHeight * k);
+      if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+      Object.assign(a, { x: 0, y: 0, w: cw, h: ch });
+      if (b.el.videoWidth) {
+        const f = Math.min(cw / b.el.videoWidth, ch / b.el.videoHeight) * st.ov.scale, w = b.el.videoWidth * f, h = b.el.videoHeight * f;
+        Object.assign(b, { w, h, x: (cw - w) / 2 + st.ov.dx * cw, y: (ch - h) / 2 + st.ov.dy * ch });
+      }
+      return;
+    }
     const hc = Math.max(...ready.map((v) => v.el.videoHeight));
     const ws = vids.map((v) => (v.el.videoWidth ? (v.el.videoWidth * hc) / v.el.videoHeight : 0));
     const total = ws.reduce((a, b) => a + b, 0);
@@ -127,7 +149,10 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
     if (!v.last) v.last = document.createElement("canvas");
     if (v.last.width !== fw || v.last.height !== fh) { v.last.width = fw; v.last.height = fh; v.hasFrame = false; }
     if (v.el.readyState >= 2 && !v.el.seeking) { v.last.getContext("2d").drawImage(v.el, 0, 0, fw, fh); v.hasFrame = true; }
-    if (v.hasFrame) ctx.drawImage(v.last, v.x, v.y, v.w, v.h);
+    if (!v.hasFrame) return;
+    ctx.globalAlpha = overlaid() && v === vids[1] ? st.ov.alpha : 1;
+    ctx.drawImage(v.last, v.x, v.y, v.w, v.h);
+    ctx.globalAlpha = 1;
   }
   function paintLabel(v) {
     if (!v.label || !v.w) return;
@@ -141,7 +166,7 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
     if (st.dead) return;
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W(), H());
     vids.forEach(paintVideo);
-    if (vids.length > 1) vids.forEach(paintLabel);
+    if (vids.length > 1 && !overlaid()) vids.forEach(paintLabel);
     st.shapes.forEach(paintShape);
     if (st.drawing) paintShape(st.drawing);
     tick();
@@ -155,15 +180,18 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
   canvas.addEventListener("pointerdown", (ev) => {
     ev.preventDefault(); canvas.setPointerCapture(ev.pointerId);
     const p = pos(ev), last = st.shapes[st.shapes.length - 1];
+    if (st.moving && overlaid()) { st.drag = { p, dx: st.ov.dx, dy: st.ov.dy }; return; }
     if (st.tool === "angle" && last?.type === "angle" && !last.c) { st.shapes.pop(); st.drawing = { ...last, c: p }; return; }
     st.drawing = st.tool === "pen" ? { type: "pen", color: st.color, pts: [p] } : { type: st.tool, color: st.color, a: p, b: p };
   });
   canvas.addEventListener("pointermove", (ev) => {
+    if (st.drag) { const p = pos(ev); st.ov.dx = st.drag.dx + p[0] - st.drag.p[0]; st.ov.dy = st.drag.dy + p[1] - st.drag.p[1]; layout(); return; }
     if (!st.drawing) return;
     const p = pos(ev), d = st.drawing;
     if (d.type === "pen") d.pts.push(p); else if (d.type === "angle" && d.c) d.c = p; else d.b = p;
   });
   const endDraw = () => {
+    st.drag = null;
     const d = st.drawing; if (!d) return;
     st.drawing = null;
     const tiny = d.type !== "pen" && !d.c && Math.hypot((d.b[0] - d.a[0]) * W(), (d.b[1] - d.a[1]) * H()) < 6;
@@ -203,8 +231,8 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
 
   function hint() {
     const last = st.shapes[st.shapes.length - 1];
-    $("[data-bd-hint]").textContent =
-      st.tool === "angle" ? (last?.type === "angle" && !last.c ? "Now drag from the joint to draw the second line." : "Angle: drag along the first limb, ending at the joint.")
+    $("[data-bd-hint]").textContent = st.moving && overlaid() ? "Drag the overlay to line it up. Tap Move overlay again to draw."
+      : st.tool === "angle" ? (last?.type === "angle" && !last.c ? "Now drag from the joint to draw the second line." : "Angle: drag along the first limb, ending at the joint.")
       : st.tool === "circle" ? "Circle: drag out from the centre." : st.tool === "pen" ? "Pen: draw freehand." : "Line: drag from start to end.";
   }
 
@@ -278,6 +306,14 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
       case "fwd": step(1); break;
       case "speed": press("speed"); vids.forEach((x) => (x.el.playbackRate = +v)); break;
       case "target": st.target = v; press("target"); syncPlay(); break;
+      case "mode": {
+        // The canvas changes size between layouts, which a recording in progress can't follow.
+        if (st.rec || v === st.mode) break;
+        st.mode = v; press("mode"); st.shapes = []; st.moving = false; setMoving(); showMode(); layout(); hint();
+        break;
+      }
+      case "move": st.moving = !st.moving; setMoving(); hint(); break;
+      case "ov-reset": Object.assign(st.ov, { scale: 1, dx: 0, dy: 0 }); $("[data-bd-size]").value = 100; layout(); break;
       case "tool": st.tool = v; press("tool"); { const last = st.shapes[st.shapes.length - 1]; if (last?.type === "angle" && !last.c) st.shapes.pop(); } hint(); break;
       case "color": st.color = v; press("color"); break;
       case "undo": st.shapes.pop(); hint(); break;
@@ -296,6 +332,15 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
     }
   });
 
+  $("[data-bd-alpha]").addEventListener("input", (ev) => { st.ov.alpha = 1 - ev.target.value / 100; });
+  $("[data-bd-size]").addEventListener("input", (ev) => { st.ov.scale = ev.target.value / 100; layout(); });
+  function setMoving() { $('[data-bd="move"]').setAttribute("aria-pressed", st.moving); canvas.style.cursor = st.moving && overlaid() ? "move" : ""; }
+  // Overlay controls only while overlaid; the time controls name the clips by what they are rather than left and right.
+  function showMode() {
+    $("[data-bd-ov]").hidden = !overlaid();
+    const names = overlaid() ? ["This video", "Overlay"] : ["Left", "Right"];
+    root.querySelectorAll('[data-bd="target"]').forEach((x) => { if (x.dataset.v !== "both") x.textContent = names[+x.dataset.v]; });
+  }
   function unload(v) { v.el.pause(); v.el.removeAttribute("src"); v.el.load(); URL.revokeObjectURL(v.url); }
   function press(group, val) { root.querySelectorAll(`[data-bd="${group}"]`).forEach((x) => x.setAttribute("aria-pressed", x.dataset.v === val)); }
 
@@ -318,7 +363,8 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
       }
       $("[data-bd-targets]").hidden = !url;
       st.shapes = []; st.target = "both"; press("target", "both");
-      layout(); syncPlay(); hint();
+      Object.assign(st.ov, { scale: 1, dx: 0, dy: 0 }); $("[data-bd-size]").value = 100; st.moving = false; setMoving();
+      showMode(); layout(); syncPlay(); hint();
       return true;
     },
     destroy() {
