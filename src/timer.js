@@ -46,7 +46,7 @@ export function at(list, t) {
 
 /* ---------- the sheet ---------- */
 const LEAD = 3; // "3, 2, 1" before EMOMs, intervals and the clock
-const st = { opt: { mode: "rest", total: 90, every: 60, rounds: 10, work: 40, rest: 20 }, run: null, open: false };
+const st = { opt: { mode: "rest", total: 90, every: 60, rounds: 10, work: 40, rest: 20 }, run: null, open: false, mini: false };
 let el, raf, ac, lock;
 
 function beep(long) {
@@ -117,10 +117,10 @@ function build() {
   el = document.createElement("div");
   el.id = "timer"; el.className = "timer"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Timer");
   el.innerHTML = `<div class="tm-head"><div class="seg" role="group" aria-label="Timer type">${[["rest", "Rest"], ["emom", "EMOM"], ["intervals", "Intervals"], ["clock", "Clock"]].map(([k, l]) =>
-    `<button data-tm="mode" data-v="${k}">${l}</button>`).join("")}</div><button class="link small" data-tm="close">Close</button></div>
-    <div class="tm-face"><div class="tm-big num" data-tm-big aria-live="off"></div><div class="small" data-tm-sub></div></div>
+    `<button data-tm="mode" data-v="${k}">${l}</button>`).join("")}</div><span class="row"><button class="link small" data-tm="mini">Hide</button><button class="link small" data-tm="close">Close</button></span></div>
+    <div class="tm-face" data-tm="expand"><div class="tm-big num" data-tm-big aria-live="off"></div><div class="small" data-tm-sub></div></div>
     <div data-tm-setup class="stack"></div>
-    <div class="row tm-ctl"><button class="btn primary" data-tm="go">Start</button><button class="btn" data-tm="reset">Reset</button></div>`;
+    <div class="row tm-ctl"><button class="btn primary" data-tm="go">Start</button><button class="btn" data-tm="reset">Reset</button><button class="btn tm-x" data-tm="close" aria-label="Close timer">&times;</button></div>`;
   el.addEventListener("click", onClick);
   el.addEventListener("change", (e) => {
     const k = e.target.dataset.tmIn; if (!k) return;
@@ -141,26 +141,35 @@ function onClick(e) {
   if (a === "mode" && !st.run) { st.opt.mode = b.dataset.v; fill(); }
   if (a === "quick") { st.opt.total = +b.dataset.v; fill(); }
   if (a === "close") closeTimer();
+  if (a === "mini") setMini(true);
+  if (a === "expand" && st.mini) setMini(false);
   if (a === "reset") { stop(); fill(); }
   if (a === "go") {
     beep(false); // unlocks audio on iPhone: sound has to start from a tap
-    if (!st.run || st.run.done) { st.run = { start: Date.now(), paused: 0, pausedAt: null }; wake(true); tick(); fill(); }
+    if (!st.run || st.run.done) { st.run = { start: Date.now(), paused: 0, pausedAt: null }; wake(true); tick(); fill(); setMini(true); }
     else if (st.run.pausedAt) { st.run.paused += Date.now() - st.run.pausedAt; st.run.pausedAt = null; wake(true); tick(); }
     else { st.run.pausedAt = Date.now(); clearTimeout(raf); wake(false); paint(); }
   }
 }
 
+// While it runs the sheet shrinks to a pill with the time and Pause; tapping the time opens it again.
+function setMini(on) {
+  st.mini = on;
+  el.classList.toggle("mini", on);
+  document.body.classList.toggle("timer-mini", on);
+}
 // Opens the sheet, optionally set up for a block ({ mode, total, every, rounds, ... }); start: run it now.
 export function openTimer(preset, start = false) {
   if (!el) build();
   if (preset && !timerRunning()) { stop(); Object.assign(st.opt, preset); }
   el.hidden = false; st.open = true; document.body.classList.add("timer-open");
+  setMini(false);
   fill();
   if (start && !timerRunning()) { st.run = null; onClick({ target: el.querySelector('[data-tm="go"]') }); }
 }
 export function closeTimer() {
   stop();
-  if (el) el.hidden = true;
+  if (el) { el.hidden = true; setMini(false); }
   st.open = false; document.body.classList.remove("timer-open");
 }
 
