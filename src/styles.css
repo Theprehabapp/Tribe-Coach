@@ -296,3 +296,6 @@ input.t.pr-in { width: 96px; padding: 7px 9px; text-align: right; }
 .prs input.t.kg { padding: 7px 9px; text-align: right; }
 select.t.pr-cat { width: auto; }
 .pr-add > input.t:first-child { flex: 1 1 160px; width: auto; }
+.pr-was { font-weight: 400; }
+.score-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.score-row .f { flex: 0 1 180px; }

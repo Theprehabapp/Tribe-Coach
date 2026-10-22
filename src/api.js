@@ -33,7 +33,7 @@ export async function myProfile(uid) {
 
 // RLS decides what comes back: the coach gets everyone, a client gets their own rows and assigned program.
 export async function loadAll() {
-  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs] = await Promise.all([
+  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs, prHistory] = await Promise.all([
     sb.from("profiles").select("*").order("created_at").then(check),
     sb.from("programs").select("*").order("created_at", { ascending: false }).then(check),
     sb.from("logs").select("*").order("date", { ascending: false }).then(check),
@@ -49,11 +49,12 @@ export async function loadAll() {
     sb.from("messages").select("log_id").limit(1).then(check).then(() => true, () => false),
     // Gymnastics and benchmark PRs arrived with migration 0011.
     sb.from("prs").select("*").order("name").then(check).catch(() => null),
+    sb.from("pr_history").select("*").then(check).catch(() => null),
   ]);
   // Labelled breakdown clips arrived with migration 0006; until it's run, one breakdown per video as before.
   return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages, clipsReady: videos.some((v) => "clips" in v),
     exercises: exercises || [], maxes: maxes || [], progReady: !!exercises && !!maxes,
-    teams: teams || [], teamsReady: !!teams, socialReady: social, prs: prs || [], prsReady: !!prs };
+    teams: teams || [], teamsReady: !!teams, socialReady: social, prs: prs || [], prHistory: prHistory || [], prsReady: !!prs && !!prHistory };
 }
 
 /* ---------- profiles ---------- */
@@ -168,6 +169,8 @@ export async function setPr(person, name, category, val) {
   check(await sb.rpc("set_pr", { person, pr_name: name, cat: category, val }));
   return check(await sb.from("prs").select("*").eq("client_id", person).order("name"));
 }
+
+export const prHistory = (person) => sb.from("pr_history").select("*").eq("client_id", person).then(check);
 
 /* ---------- chat ---------- */
 export const loadMessages = () => sb.from("messages").select("*").order("created_at").then(check);

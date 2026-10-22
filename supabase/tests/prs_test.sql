@@ -32,3 +32,18 @@ set request.jwt.uid = '00000000-0000-0000-0000-00000000000c';
 \echo '--- Coach clears Amy''s Fran with an empty value (expect Ring Muscle Ups only)'
 select set_pr('00000000-0000-0000-0000-0000000000a1', 'FRAN', 'benchmark', '');
 select name, value from prs;
+
+\echo '--- History: Fran 2:58 then 2:41 on the same day is one row; clearing Fran today drops it (expect Ring Muscle Ups 12 only)'
+select name, value from pr_history order by name;
+\echo '--- An earlier day stays when the PR changes today (expect 2 Fran rows: 3:05 then 2:50)'
+reset role;
+insert into pr_history (client_id, name, category, value, scored_on) values ('00000000-0000-0000-0000-0000000000a1', 'Fran', 'benchmark', '3:05', current_date - 30);
+set role authenticated;
+select set_pr('00000000-0000-0000-0000-0000000000a1', 'Fran', 'benchmark', '2:50');
+select value from pr_history where name = 'Fran' order by scored_on;
+\echo '--- 1RMs are logged too, without trailing zeros (expect lift | 102.5)'
+select set_max('00000000-0000-0000-0000-0000000000a1', 'Snatch', 102.50);
+select category, value from pr_history where name = 'Snatch';
+\echo '--- Athletes cannot call note_pr directly (expect error)'
+set request.jwt.uid = '00000000-0000-0000-0000-0000000000a1';
+select note_pr('00000000-0000-0000-0000-0000000000a1', 'Fran', 'benchmark', '1:00');

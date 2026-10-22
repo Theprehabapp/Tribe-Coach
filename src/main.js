@@ -5,6 +5,7 @@ import { mountBreakdown } from "./breakdown.js";
 import { prepareVideo, checkVideo, warmUp } from "./upload.js";
 import * as notify from "./notify.js";
 import { liftSets, series, records, newPRs } from "./progress.js";
+import { PR_LIFTS, PR_SETS, KINDS, validScore, scoreKind, prTarget, beats } from "./scores.js";
 import {
   FEEDBACK_HOURS, DOW_LONG, W1_LINE, ymd, fmtDay, fmtLong, fmtTime,
   dueAt, timeLeft, weekOf, sessionDate, rxLine, bumpTarget, blockLabels, exKey, hasPct, pctLoad,
@@ -16,7 +17,7 @@ const app = document.getElementById("app");
 const tabsEl = document.getElementById("tabs");
 
 // All data the signed-in person may see, loaded once and kept in sync as they act.
-let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false, teams: [], teamsReady: false, socialReady: false, prs: [], prsReady: false };
+let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false, teams: [], teamsReady: false, socialReady: false, prs: [], prHistory: [], prsReady: false };
 let me = null; // signed-in profile
 let ui = { tab: null, view: null, programId: null, week: 0, clientId: null, logKey: null, drafts: {}, file: null, busy: false };
 
@@ -737,9 +738,10 @@ function logSummary(l) {
   const prs = l.done ? newPRs(l, clientLogs(l.client_id).filter((x) => x.date < l.date || (x.date === l.date && x.id < l.id)), nameOf) : [];
   const lines = (l.entries || []).map((en) => {
     const e = { name: day?.exercises.find((x) => x.id === en.exId)?.name || en.name }; if (!e.name) return "";
-    const sets = en.sets.filter((s) => s.done || s.kg || s.reps); if (!sets.length) return "";
+    const ex = day?.exercises.find((x) => x.id === en.exId), unit = ex && VAL_METRICS.includes(ex.metric) ? " " + ex.metric.toLowerCase() : "";
+    const sets = en.sets.filter((s) => s.done || s.kg || s.reps || s.val); if (!sets.length && !en.result) return "";
     const pr = prs.find((x) => exKey(x.name) === exKey(e.name));
-    return `<div class="small"><strong>${esc(e.name)}</strong>${pr ? ` <span class="chip solid" title="${pr.kind === "heaviest" ? "Heaviest yet" : "Best estimated 1RM yet"}">PR</span>` : ""} <span class="muted num">${sets.map((s) => esc(s.reps || "-") + (s.kg ? ` x ${esc(s.kg)}kg` : "") + (s.rpe ? ` @${esc(s.rpe)}` : "")).join(", ")}</span></div>`;
+    return `<div class="small"><strong>${esc(e.name)}</strong>${pr || en.pr ? ` <span class="chip solid" title="${en.pr ? "Best score yet" : pr.kind === "heaviest" ? "Heaviest yet" : "Best estimated 1RM yet"}">PR</span>` : ""} <span class="muted num">${sets.map((s) => esc(s.reps || "-") + (s.kg ? ` x ${esc(s.kg)}kg` : "") + (s.val ? ` x ${esc(s.val)}${esc(unit)}` : "") + (s.rpe ? ` @${esc(s.rpe)}` : "")).join(", ")}</span>${en.result ? ` <span class="num">Score ${esc(en.result)}</span>` : ""}</div>`;
   }).join("");
   const talk = D.socialReady && D.chatReady ? D.messages.filter((m) => m.log_id === l.id) : [];
   const who = (m) => (m.sender_id === me.id ? "You" : isCoach() ? esc(profile(m.sender_id)?.name || "Athlete") : "Coach");
@@ -888,6 +890,7 @@ function setHint(e, si, f) {
   if (f === "reps") return r ? String(r.reps) : String(e.reps);
   const v = String(r?.val ?? "").trim();
   if (f === "rpe") return e.metric === "RPE" && v ? v : "7";
+  if (f === "val") return v;
   if (e.metric === "kg") return v;
   if (e.metric === "% 1RM" && v && D.progReady) { const m = maxFor(me.id, e.name), kg = m && pctLoad(v + "%", +m.kg); return kg ? kg.replace(" kg", "") : ""; }
   return "";
@@ -900,26 +903,18 @@ function demoBit(name) {
 }
 // PR board for one athlete, editable by the coach and by the athlete. Barbell PRs are the 1RMs in maxes,
 // so percentages in the program show as kg from them; gymnastics and benchmarks live in prs.
-const PR_LIFTS = {
-  Strength: ["Back Squat", "Front Squat", "Overhead Squat", "Deadlift", "Bench Press", "Strict Press", "Push Press", "Thruster"],
-  Olympic: ["Snatch", "Power Snatch", "Clean", "Power Clean", "Clean & Jerk", "Split Jerk"],
-};
-const PR_SETS = {
-  gymnastics: [["Strict Pull Ups", "reps"], ["Pull Ups", "reps"], ["Chest to Bar Pull Ups", "reps"], ["Bar Muscle Ups", "reps"], ["Ring Muscle Ups", "reps"],
-    ["Toes to Bar", "reps"], ["Strict HSPU", "reps"], ["Kipping HSPU", "reps"], ["Legless Rope Climbs", "reps"], ["Handstand Walk", "m"], ["Double Unders", "reps"]],
-  benchmark: [["Fran", "time"], ["Grace", "time"], ["Isabel", "time"], ["Diane", "time"], ["Helen", "time"], ["Karen", "time"], ["Elizabeth", "time"],
-    ["Jackie", "time"], ["Annie", "time"], ["Murph", "time"], ["Cindy", "rounds"], ["Fight Gone Bad", "score"], ["2k Row", "time"], ["5k Run", "time"]],
-};
-const PR_KIND = { reps: ["reps", "numeric", /^\d{1,4}$/, "a number of reps, e.g. 15"], m: ["m", "decimal", /^\d{1,4}(\.\d{1,2})?$/, "metres, e.g. 25"],
-  time: ["m:ss", "text", /^\d{1,3}:[0-5]\d$/, "a time as m:ss, e.g. 2:45"], rounds: ["rds+reps", "text", /^\d{1,3}(\+\d{1,3})?$/, "rounds+reps, e.g. 21+5"],
-  score: ["score", "text", /^.{1,20}$/, "a score of up to 20 characters"] };
 const prFor = (cid, name) => D.prs.find((r) => r.client_id === cid && exKey(r.name) === exKey(name));
+// Earlier values of one PR, newest first, leaving out the current one: "Was 2:58 (Sat 12 Sep), 3:10 (Mon 1 Jun)".
+function prTrail(cid, name) {
+  const h = D.prHistory.filter((x) => x.client_id === cid && exKey(x.name) === exKey(name)).sort((x, y) => y.scored_on.localeCompare(x.scored_on)).slice(1, 4);
+  return h.length ? `<span class="small muted pr-was">Was ${h.map((x) => `${esc(x.value)}${x.category === "lift" ? " kg" : ""} (${fmtDay(x.scored_on)})`).join(", ")}</span>` : "";
+}
 function prBoard(cid) {
   if (!D.progReady && !D.prsReady) return "";
-  const row = (name, input, when) => `<div class="pr-row"><span class="pr-name">${esc(name)}${when ? `<span class="small muted">${fmtDay(when)}</span>` : ""}</span>${input}</div>`;
+  const row = (name, input, when) => `<div class="pr-row"><span class="pr-name">${esc(name)}${when ? `<span class="small muted">${fmtDay(when)}</span>` : ""}${prTrail(cid, name)}</span>${input}</div>`;
   const liftRow = (name) => { const m = maxFor(cid, name);
     return row(m ? m.exercise : name, `<span class="row"><input class="t num kg" inputmode="decimal" aria-label="${esc(name)} 1RM in kg" data-change="pr-kg" data-cid="${cid}" data-ex="${esc(m ? m.exercise : name)}" value="${m ? +m.kg : ""}"><span class="small">kg</span></span>`, m?.tested_on); };
-  const setRow = (cat, name, kind) => { const r = prFor(cid, name), [ph, mode] = PR_KIND[kind];
+  const setRow = (cat, name, kind) => { const r = prFor(cid, name), [ph, mode] = KINDS[kind];
     return row(r ? r.name : name, `<input class="t num pr-in" inputmode="${mode}" placeholder="${ph}" aria-label="${esc(name)} PR" data-change="pr-val" data-cid="${cid}" data-cat="${cat}" data-kind="${kind}" data-name="${esc(r ? r.name : name)}" value="${esc(r?.value)}">`, r?.scored_on); };
   const group = (title, note, rows) => `<div class="pr-group"><div class="kicker">${title}${note ? ` <span class="muted">${note}</span>` : ""}</div><div class="pr-grid">${rows.join("")}</div></div>`;
   let out = "";
@@ -951,10 +946,28 @@ function prBoard(cid) {
 async function savePr(cid, name, cat, val) {
   const rows = await api.setPr(cid, name, cat, val);
   D.prs = [...D.prs.filter((r) => r.client_id !== cid), ...rows];
+  await freshHistory(cid);
 }
 async function saveMax(cid, ex, kg) {
   const rows = await api.setMax(cid, ex, kg);
   D.maxes = [...D.maxes.filter((m) => m.client_id !== cid), ...rows];
+  await freshHistory(cid);
+}
+// Scores in this log that beat the athlete's PR board (benchmarks, max-effort gymnastics). Marks those entries.
+function scorePRs(l, day) {
+  if (!D.prsReady) return [];
+  const wins = [];
+  for (const en of l.entries) {
+    const e = day.exercises.find((x) => x.id === en.exId), t = e && en.result && prTarget(e, myCustomPrs(l.client_id));
+    en.pr = !!(t && validScore(t.kind, en.result) && beats(t.kind, en.result, prFor(l.client_id, t.name)?.value));
+    if (en.pr) wins.push({ name: t.name, cat: t.cat, value: en.result });
+  }
+  return wins;
+}
+async function freshHistory(cid) {
+  if (!D.prsReady) return;
+  const rows = await api.prHistory(cid).catch(() => null);
+  if (rows) D.prHistory = [...D.prHistory.filter((x) => x.client_id !== cid), ...rows];
 }
 
 /* ----- coach: exercise library ----- */
@@ -991,6 +1004,18 @@ async function addExercise() {
   }
 }
 
+// Per-set columns that aren't a weight are logged as "val", so they never count towards lifting PRs.
+const VAL_METRICS = ["Watts", "Seconds", "Metres", "Calories"];
+const myCustomPrs = (cid) => D.prs.filter((r) => r.client_id === cid);
+// The block's score (a time, watts, rounds...) under its sets, with the PR to beat when it's on the board.
+function scoreRow(e, en) {
+  const custom = myCustomPrs(me.id), kind = String(e.score || "").trim() || prTarget(e, custom) ? scoreKind(e, custom) : null;
+  if (!kind && !en.result && !ui.scoreOpen?.[e.id]) return `<button class="link small" data-act="add-score" data-ex="${e.id}">Add a score</button>`;
+  const [ph, mode] = KINDS[kind || "score"], tgt = D.prsReady && prTarget(e, custom), cur = tgt && prFor(me.id, tgt.name);
+  return `<div class="score-row"><label class="f">Score${e.score ? ` <span class="muted">${esc(e.score.replace(/[()]/g, ""))}</span>` : ""}
+    <input class="t num" id="score-${e.id}" inputmode="${mode}" placeholder="${ph}" data-input="result" data-ex="${e.id}" value="${esc(en.result)}"></label>
+    ${tgt ? `<span class="small muted">${cur ? `PR to beat: ${esc(cur.value)}` : "Goes on your PR board"}</span>` : ""}</div>`;
+}
 function vLog() {
   const r = logFor(ui.logKey);
   if (!r) { ui.view = null; return vToday(); }
@@ -1000,15 +1025,15 @@ function vLog() {
   const labels = blockLabels(day.exercises);
   day.exercises.forEach((e, ei) => {
     const en = l.entries.find((x) => x.exId === e.id) || (l.entries[ei] = { exId: e.id, sets: [{ reps: "", kg: "", rpe: "", done: false }] });
-    const ins = [e.note, e.rest].filter(Boolean).join("\n");
+    const ins = [e.note, e.rest].filter(Boolean).join("\n"), vf = VAL_METRICS.includes(e.metric) ? "val" : "kg";
     const lb = labels[ei], mates = lb && /\d$/.test(lb) ? labels.filter((x) => x && x[0] === lb[0]) : [];
     out += `${e.section ? `<div class="section-tag"><span class="kicker">${esc(e.section)}</span>${e.score ? `<span class="chip">${esc(e.score)}</span>` : ""}</div>` : ""}<section class="card${mates.length ? " superset" : ""}"><div class="row spread"><h3>${lb ? `<span class="blk">${lb}</span> ` : ""}${esc(e.name)}</h3><button class="link small" data-act="film" data-ex="${esc(e.name)}">Film a set</button></div>
       ${mates.length && lb.endsWith("1") ? `<p class="small muted">Superset: do ${mates.join(" and ")} back to back, then rest.</p>` : ""}
       ${rxLine(e) ? `<p class="rx">${esc(rxLine(e))}</p>` : ""}${loadLine(me.id, e)}${ins ? `<p class="ins">${esc(ins)}</p>` : ""}${demoBit(e.name)}
-      <div class="colhead"><span>Set</span><span>Reps</span><span>kg</span><span>RPE</span><span></span></div>
-      ${en.sets.map((s, si) => `<div class="setrow"><span class="n num">${si + 1}</span>${["reps", "kg", "rpe"].map((f) =>
+      <div class="colhead"><span>Set</span><span>Reps</span><span>${vf === "val" ? esc(e.metric) : "kg"}</span><span>RPE</span><span></span></div>
+      ${en.sets.map((s, si) => `<div class="setrow"><span class="n num">${si + 1}</span>${["reps", vf, "rpe"].map((f) =>
         `<input class="t num" id="s-${e.id}-${si}-${f}" inputmode="decimal" aria-label="Set ${si + 1} ${f}" data-input="set" data-ex="${e.id}" data-s="${si}" data-f="${f}" value="${esc(s[f])}" placeholder="${esc(setHint(e, si, f))}">`).join("")}
-        <button class="tick" data-act="tick" data-ex="${e.id}" data-s="${si}" aria-pressed="${!!s.done}" aria-label="Set ${si + 1} done">${s.done ? "&#10003;" : ""}</button></div>`).join("")}</section>`;
+        <button class="tick" data-act="tick" data-ex="${e.id}" data-s="${si}" aria-pressed="${!!s.done}" aria-label="Set ${si + 1} done">${s.done ? "&#10003;" : ""}</button></div>`).join("")}${scoreRow(e, en)}</section>`;
   });
   out += `<label class="f">Notes for your coach<textarea class="t" id="log-note" data-input="log-note" placeholder="How it went, anything that felt off.">${esc(l.note)}</textarea></label>
     <div class="row"><button class="btn primary" data-act="finish-log">${l.done ? "Update session" : "Finish session"}</button></div>`;
@@ -1333,17 +1358,21 @@ document.addEventListener("click", async (ev) => {
     case "revoke-no": go(() => (ui.confirmRevoke = null)); break;
     case "revoke-yes": await patchProfile(ui.clientId, { approved: false }, "Access removed."); ui.view = null; ui.confirmRevoke = null; render(); break;
     case "open-log": go(() => { ui.logKey = { w: +b.dataset.w, id }; ui.view = "log"; }); scrollTo(0, 0); break;
+    case "add-score": go(() => { (ui.scoreOpen ||= {})[b.dataset.ex] = true; }); document.getElementById(`score-${b.dataset.ex}`)?.focus(); break;
     case "tick": {
       const { l } = logFor(ui.logKey); const s = l.entries.find((x) => x.exId === b.dataset.ex).sets[+b.dataset.s];
       s.done = !s.done; render(); saveLogSoon(l);
       break;
     }
     case "finish-log": {
-      const { l } = logFor(ui.logKey); l.done = true;
+      const { l, day } = logFor(ui.logKey); l.done = true;
+      const wins = scorePRs(l, day);
       const ok = await saveLogSoon(l, true);
       const prs = newPRs(l, clientLogs(me.id), nameOf);
       ui.boards = {}; // fresh numbers next time a leaderboard shows
-      if (ok !== undefined) { go(() => (ui.view = null)); toast(prs.length ? `Session logged. New PR${prs.length > 1 ? "s" : ""}: ${prs.map((x) => x.kind === "heaviest" ? `${x.name} ${x.kg} kg x ${x.reps}` : `${x.name} est. 1RM ${x.e1rm} kg`).join(", ")}.` : "Session logged."); scrollTo(0, 0); }
+      for (const w of wins) await savePr(me.id, w.name, w.cat, w.value).catch((err) => fail(err, "PR"));
+      const said = [...prs.map((x) => x.kind === "heaviest" ? `${x.name} ${x.kg} kg x ${x.reps}` : `${x.name} est. 1RM ${x.e1rm} kg`), ...wins.map((w) => `${w.name} ${w.value}`)];
+      if (ok !== undefined) { go(() => (ui.view = null)); toast(said.length ? `Session logged. New PR${said.length > 1 ? "s" : ""}: ${said.join(", ")}.` : "Session logged."); scrollTo(0, 0); }
       break;
     }
     case "film": go(() => { ui.filmEx = b.dataset.ex; ui.tab = "videos"; ui.view = null; }); scrollTo(0, 0); break;
@@ -1403,6 +1432,7 @@ document.addEventListener("input", (ev) => {
     }
     case "ath-q": ui.athQ = t.value; filterAth(); return;
     case "c-goal": { const c = profile(ui.clientId); c.goal = t.value; debounce("goal", () => api.updateProfile(c.id, { goal: c.goal }).catch((err) => fail(err, "Goal"))); return; }
+    case "result": { const { l } = logFor(ui.logKey); l.entries.find((x) => x.exId === t.dataset.ex).result = t.value.trim(); saveLogSoon(l); return; }
     case "set": { const { l } = logFor(ui.logKey); l.entries.find((x) => x.exId === t.dataset.ex).sets[+t.dataset.s][t.dataset.f] = t.value; saveLogSoon(l); return; }
     case "log-note": { const { l } = logFor(ui.logKey); l.note = t.value; saveLogSoon(l); return; }
   }
@@ -1453,8 +1483,8 @@ document.addEventListener("change", async (ev) => {
     try { await saveMax(t.dataset.cid, t.dataset.ex, raw ? kg : null); toast(raw ? `${t.dataset.ex} 1RM saved.` : `${t.dataset.ex} removed.`); } catch (err) { fail(err, "1RM"); }
   }
   if (a === "pr-val") {
-    const val = t.value.trim(), [, , re, hint] = PR_KIND[t.dataset.kind] || PR_KIND.score;
-    if (val && !re.test(val)) return toast(`Enter ${hint}.`);
+    const val = t.value.trim(), kind = KINDS[t.dataset.kind] ? t.dataset.kind : "score";
+    if (val && !validScore(kind, val)) return toast(`Enter ${KINDS[kind][3]}.`);
     try { await savePr(t.dataset.cid, t.dataset.name, t.dataset.cat, val); toast(val ? `${t.dataset.name} PR saved.` : `${t.dataset.name} removed.`); } catch (err) { fail(err, "PR"); }
   }
   if (a === "c-team") await patchProfile(ui.clientId, { team_id: t.value || null }, t.value ? "Added to team." : "Removed from team.");

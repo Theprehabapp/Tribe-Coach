@@ -6,13 +6,15 @@ const role = new URLSearchParams(location.search).get("as") || "coach";
 const coach = { id: "c", email: "coach@x", name: "Coach", role: "coach", approved: true, goal: "" };
 const amy = { id: "a", email: "amy@x", name: "Amy", role: "client", approved: true, goal: "", program_id: null, start_date: "2026-09-28" };
 const ben = { id: "b", email: "ben@x", name: "Ben", role: "client", approved: false, goal: "" };
-const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [], prs: [] };
+const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [], prs: [], prHistory: [] };
 if (new URLSearchParams(location.search).get("seed")) {
   db.programs.push({ id: "p-seed", ...exampleProgram() }); amy.program_id = "p-seed";
   db.logs.push({ id: "l-seed", client_id: "a", program_id: "p-seed", week: 0, day_id: db.programs[0].weeks[0].days[0].id, date: "2026-09-28", done: true, note: "", entries: [] });
   db.exercises.push({ id: "x1", name: "Back Squat", demo_url: "", demo_path: "c/demo-back-squat--1.webm", cues: "Brace, sit between your heels." });
   db.maxes.push({ client_id: "a", exercise: "Back Squat", kg: 120, tested_on: "2026-10-01" });
   db.prs.push({ client_id: "a", name: "Fran", category: "benchmark", value: "2:41", scored_on: "2026-09-12" });
+  db.prHistory.push({ client_id: "a", name: "Fran", category: "benchmark", value: "3:05", scored_on: "2026-06-01" }, { client_id: "a", name: "Fran", category: "benchmark", value: "2:41", scored_on: "2026-09-12" },
+    { client_id: "a", name: "Back Squat", category: "lift", value: "120", scored_on: "2026-10-01" }, { client_id: "a", name: "Back Squat", category: "lift", value: "112.5", scored_on: "2026-07-01" });
   db.videos.push({ id: "v-seed2", client_id: "a", exercise: "Deadlift", note: "", slot: "2026-01-02", status: "waiting", verdict: "", feedback: "", uploaded_at: "2026-01-02T09:00:00Z", storage_path: "a/y.webm", review_path: null, clips: [] });
   db.videos.push({ id: "v-old", client_id: "a", exercise: "Back Squat", note: "", slot: "2025-12-01", status: "reviewed", verdict: "tweak", feedback: "Knees out.", uploaded_at: "2025-12-01T09:00:00Z", reviewed_at: "2025-12-02T09:00:00Z", storage_path: "a/z.webm", review_path: null, clips: [{ path: "a/r1.webm", label: "Bar path" }, { path: "a/r2.webm", label: "Bracing" }] });
   db.messages.push({ id: "m-seed", client_id: "a", sender_id: "a", body: "Should I go lighter next week?", video_id: "v-old", clip_path: null, created_at: "2025-12-03T09:00:00Z", read_at: null });
@@ -22,6 +24,11 @@ if (new URLSearchParams(location.search).get("seed")) {
 if (new URLSearchParams(location.search).get("team") && db.programs.length) { db.teams.push({ id: "t-seed", name: "Morning Crew", program_id: "p-seed", start_date: "2026-09-28" }); amy.program_id = null; amy.start_date = null; amy.team_id = "t-seed"; }
 // ?rows=1: this week's Back Squat is prescribed set by set off a %.
 if (new URLSearchParams(location.search).get("rows") && db.programs.length) Object.assign(db.programs[0].weeks[2].days[0].exercises[0], { metric: "% 1RM", sets: 4, reps: "5,3,2,1", target: "", rows: [{ reps: "5", val: "80" }, { reps: "3", val: "85" }, { reps: "2", val: "90" }, { reps: "1", val: "95" }] });
+// ?bench=1: every week's first session ends with Fran, a watts test and a max set of toes to bar.
+if (new URLSearchParams(location.search).get("bench") && db.programs.length) db.programs[0].weeks.forEach((w, i) => w.days[0].exercises.push(
+  { id: "fran" + i, block: "D", name: "Fran", sets: "1", reps: "21-15-9", target: "", cue: "", rest: "", note: "Thrusters 43 kg, pull ups" },
+  { id: "row" + i, block: "E", name: "Row", sets: "3", reps: "1:00", target: "", cue: "", rest: "", note: "", score: "(FOR WATTS)", metric: "Watts", rows: [{ reps: "1:00", val: "300" }, { reps: "1:00", val: "300" }, { reps: "1:00", val: "300" }] },
+  { id: "t2b" + i, block: "F", name: "Toes to Bar", sets: "1", reps: "Max unbroken", target: "", cue: "", rest: "", note: "" }));
 // ?hist=1: four weeks of Amy's squats and deadlifts, for the progress chart and PRs.
 if (new URLSearchParams(location.search).get("hist")) [["2026-09-14", 100, 140], ["2026-09-21", 105, 145], ["2026-09-28", 102.5, 150], ["2026-10-05", 110, 150]].forEach(([date, sq, dl], i) =>
   db.logs.push({ id: "h" + i, client_id: "a", program_id: "gone", week: i, day_id: "x", date, done: true, note: "", entries: [
@@ -72,8 +79,11 @@ export const saveExercise = async (x) => { const row = { demo_url: "", demo_path
 export const deleteExercise = async (x) => { db.exercises = db.exercises.filter((y) => y.id !== x.id); };
 export const uploadDemo = async (cid, file, name) => { window.__demo = file; return `${cid}/demo-${name}--1.webm`; };
 export const removeFile = async () => {};
-export const setPr = async (person, name, category, val) => { db.prs = db.prs.filter((r) => !(r.client_id === person && r.name.toLowerCase() === name.toLowerCase())); if (val) db.prs.push({ client_id: person, name, category, value: val, scored_on: "2026-10-20" }); window.__pr = { person, name, category, val }; return structuredClone(db.prs.filter((r) => r.client_id === person)); };
-export const setMax = async (person, ex, kg) => { db.maxes = db.maxes.filter((m) => !(m.client_id === person && m.exercise.toLowerCase() === ex.toLowerCase())); if (kg != null) db.maxes.push({ client_id: person, exercise: ex, kg, tested_on: "2026-10-16" }); window.__max = { person, ex, kg }; return structuredClone(db.maxes.filter((m) => m.client_id === person)); };
+const TODAY = "2026-10-20";
+const notePr = (person, name, category, val) => { db.prHistory = db.prHistory.filter((x) => !(x.client_id === person && x.name.toLowerCase() === name.toLowerCase() && x.scored_on === TODAY)); if (val != null) db.prHistory.push({ client_id: person, name, category, value: String(val), scored_on: TODAY }); };
+export const prHistory = async (person) => structuredClone(db.prHistory.filter((x) => x.client_id === person));
+export const setPr = async (person, name, category, val) => { db.prs = db.prs.filter((r) => !(r.client_id === person && r.name.toLowerCase() === name.toLowerCase())); if (val) db.prs.push({ client_id: person, name, category, value: val, scored_on: TODAY }); notePr(person, name, category, val || null); window.__pr = { person, name, category, val }; return structuredClone(db.prs.filter((r) => r.client_id === person)); };
+export const setMax = async (person, ex, kg) => { db.maxes = db.maxes.filter((m) => !(m.client_id === person && m.exercise.toLowerCase() === ex.toLowerCase())); if (kg != null) db.maxes.push({ client_id: person, exercise: ex, kg, tested_on: "2026-10-16" }); notePr(person, ex, "lift", kg); window.__max = { person, ex, kg }; return structuredClone(db.maxes.filter((m) => m.client_id === person)); };
 export const createTeam = async (t) => { const row = { id: "t" + db.teams.length, program_id: null, start_date: null, ...structuredClone(t) }; db.teams.push(row); return structuredClone(row); };
 export const saveTeam = async (id, patch) => { const row = db.teams.find((t) => t.id === id); Object.assign(row, patch); window.__team = structuredClone(row); return structuredClone(row); };
 export const deleteTeam = async (id) => { db.teams = db.teams.filter((t) => t.id !== id); };
