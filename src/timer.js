@@ -72,12 +72,15 @@ function view() {
   if (o.mode === "clock") return { big: fmt(Math.floor(t - lead)), sub: "Running clock", cls: "" };
   const p = at(list, t - lead);
   if (p.done) return { big: "0:00", sub: "Done", cls: "done" };
-  return { big: fmt(p.left), sub: list[p.i].label, cls: o.mode === "intervals" && !list[p.i].work ? "rest" : "" };
+  return { big: fmt(p.left), sub: list[p.i].label, cls: [o.mode === "intervals" && !list[p.i].work ? "rest" : "", p.left <= 3 ? "last" : ""].join(" ").trim() };
 }
 function paint() {
   if (!el) return;
   const v = view(), r = st.run;
   el.querySelector("[data-tm-big]").textContent = v.big;
+  // Running full screen, the whole screen carries the phase so it reads from across the gym.
+  el.classList.toggle("run", !!r && !st.mini);
+  el.dataset.phase = r ? v.cls : "";
   el.querySelector("[data-tm-sub]").textContent = v.sub;
   el.querySelector(".tm-face").className = `tm-face ${v.cls}`;
   el.querySelector('[data-tm="go"]').textContent = !r || r.done ? "Start" : r.pausedAt ? "Resume" : "Pause";
@@ -93,7 +96,7 @@ function tick() {
   else if (o.mode === "clock") { if (r.phase !== "go") { r.phase = "go"; beep(true); } }
   else {
     const list = phases(o), p = at(list, t - lead);
-    if (p.done) { beep(true); r.done = true; r.pausedAt = Date.now(); wake(false); paint(); return; }
+    if (p.done) { beep(true); r.done = true; r.pausedAt = Date.now(); wake(false); paint(); if (o.mode === "rest") setTimeout(() => { if (st.run === r) closeTimer(); }, 4000); return; }  // a finished rest clears itself
     if (r.phase !== p.i) { if (r.phase !== undefined || lead) long = true; r.phase = p.i; }
     if (p.left <= 3) key = `${p.i}-${Math.ceil(p.left)}`;
   }
@@ -143,20 +146,21 @@ function onClick(e) {
   if (a === "close") closeTimer();
   if (a === "mini") setMini(true);
   if (a === "expand" && st.mini) setMini(false);
-  if (a === "reset") { stop(); fill(); }
+  if (a === "reset") { stop(); setMini(false); fill(); }
   if (a === "go") {
     beep(false); // unlocks audio on iPhone: sound has to start from a tap
-    if (!st.run || st.run.done) { st.run = { start: Date.now(), paused: 0, pausedAt: null }; wake(true); tick(); fill(); setMini(true); }
+    if (!st.run || st.run.done) { st.run = { start: Date.now(), paused: 0, pausedAt: null }; wake(true); tick(); fill(); }
     else if (st.run.pausedAt) { st.run.paused += Date.now() - st.run.pausedAt; st.run.pausedAt = null; wake(true); tick(); }
     else { st.run.pausedAt = Date.now(); clearTimeout(raf); wake(false); paint(); }
   }
 }
 
-// While it runs the sheet shrinks to a pill with the time and Pause; tapping the time opens it again.
+// A running timer fills the screen; Hide shrinks it to a pill with the time and Pause, and tapping the time brings it back.
 function setMini(on) {
   st.mini = on;
   el.classList.toggle("mini", on);
   document.body.classList.toggle("timer-mini", on);
+  paint();
 }
 // Opens the sheet, optionally set up for a block ({ mode, total, every, rounds, ... }); start: run it now.
 export function openTimer(preset, start = false) {
