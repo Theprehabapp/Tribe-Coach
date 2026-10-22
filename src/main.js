@@ -131,6 +131,7 @@ async function start(session) {
 
 function renderShell(html) {
   tabsEl.innerHTML = "";
+  document.querySelector(".top-timer").hidden = true;
   document.querySelector(".tabs").hidden = true;
   app.innerHTML = html + lockup();
 }
@@ -187,6 +188,8 @@ function renderTabs() {
 }
 function render() {
   renderTabs();
+  // The timer is one tap away on every Training screen (the week, and a session opened from it).
+  document.querySelector(".top-timer").hidden = isCoach() || !(ui.view === "log" || (!ui.view && ui.tab === "today"));
 
   if (bd && ui.view !== "review") { bd.destroy(); bd = null; }
   if (ui.view !== "review") dropPrefetch();
@@ -1145,7 +1148,7 @@ function vLog() {
   const r = logFor(ui.logKey);
   if (!r) { ui.view = null; return vToday(); }
   const { l, day } = r;
-  let out = `<div class="row spread"><button class="link" data-act="back">Back</button><button class="btn small" data-act="timer">Timer</button></div><section class="hero"><div class="kicker">Week ${ui.logKey.w + 1}, ${fmtLong(l.date)}</div><h1>${esc(day.name)}</h1>
+  let out = `<div class="row"><button class="link" data-act="back">Back</button></div><section class="hero"><div class="kicker">Week ${ui.logKey.w + 1}, ${fmtLong(l.date)}</div><h1>${esc(day.name)}</h1>
     ${day.coachNote ? `<div class="feedback"><span class="kicker">From your coach</span><p class="small">${esc(day.coachNote)}</p></div>` : ""}</section>`;
   const labels = blockLabels(day.exercises);
   day.exercises.forEach((e, ei) => {
