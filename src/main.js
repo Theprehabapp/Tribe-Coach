@@ -183,7 +183,7 @@ function renderTabs() {
     : [["today", "Training"], ["videos", "Videos"], ["chat", "Coach", unread(me.id)], ["history", "Log"]];
   document.querySelector(".tabs").hidden = false;
   tabsEl.innerHTML = tabs.map(([k, label, n]) =>
-    `<button data-act="tab" data-v="${k}"${ui.tab === k && !ui.view ? ' aria-current="page"' : ""}><span class="dot"></span>${label}${n ? ` <span class="count num">${n}</span>` : ""}</button>`).join("");
+    `<button data-act="tab" data-v="${k}"${ui.tab === k && !ui.view ? ' aria-current="page"' : ""}><span class="tab-ico">${TAB_ICON[k]}${n ? `<span class="badge num">${n}</span>` : ""}</span>${label}</button>`).join("");
 }
 function render() {
   renderTabs();
@@ -645,6 +645,15 @@ const ICON = {
   chat: svg('<path d="M4 5h16v11H9l-5 4z"/>'),
   vid: svg('<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>'),
 };
+const TAB_ICON = {
+  queue: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5z"/>'),
+  programs: svg('<rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
+  clients: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.8a3.5 3.5 0 0 1 0 6.4M18 14.8c1.8.7 3 2.4 3.5 5.2"/>'),
+  today: svg('<path d="M6.5 7v10M17.5 7v10M3.5 9.5v5M20.5 9.5v5M6.5 12h11"/>'),
+  videos: svg('<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>'),
+  chat: svg('<path d="M4 5h16v11H9l-5 4z"/>'),
+  history: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+};
 function vClientDetail() {
   const c = profile(ui.clientId);
   if (!c) { ui.view = null; return vClients(); }
@@ -897,7 +906,14 @@ function vTodayPlan() {
   if (w >= p.weeks.length) return out + `<h1>Block done</h1><p class="muted">You've finished ${esc(p.name)}. Your coach will load the next one.</p></section>`;
   const t = today(), days = [...p.weeks[w].days].sort((a, b) => sessionDate(start, w, a.dow) - sessionDate(start, w, b.dow));
   const todays = days.find((d) => ymd(sessionDate(start, w, d.dow)) === t);
-  out += `<h1>${todays ? esc(todays.name) + " today" : `Week ${w + 1} of ${p.weeks.length}`}</h1><p class="muted small">${esc(p.name)}</p></section><div class="list">`;
+  out += `<h1>${todays ? esc(todays.name) + " today" : `Week ${w + 1} of ${p.weeks.length}`}</h1><p class="muted small">${esc(p.name)}</p></section>`;
+  // One big button for the session that matters now: today's, or else the next one not yet logged.
+  const next = todays || days.find((d) => ymd(sessionDate(start, w, d.dow)) > t && !findLog(me.id, p.id, w, d.id)?.done);
+  if (next) {
+    const l = findLog(me.id, p.id, w, next.id), when = next === todays ? "today's session" : `next: ${esc(next.name)}, ${fmtDay(ymd(sessionDate(start, w, next.dow)))}`;
+    out += `<button class="btn primary start-btn${l?.done ? " done" : ""}" data-act="open-log" data-w="${w}" data-id="${next.id}"><span>${l?.done ? "View" : l ? "Continue" : "Start"} ${when}</span>${next === todays ? `<span class="small">${esc(next.name)}, ${next.exercises.length} exercises${l?.done ? ", logged" : ""}</span>` : ""}</button>`;
+  }
+  out += `<div class="list">`;
   for (const d of days) {
     const dt = ymd(sessionDate(start, w, d.dow)), l = findLog(me.id, p.id, w, d.id);
     const state = l?.done ? '<span class="chip green">Logged</span>' : l ? '<span class="chip accent">In progress</span>' : dt < t ? '<span class="chip red">Missed</span>' : dt === t ? '<span class="chip solid">Today</span>' : `<span class="chip">${fmtDay(dt)}</span>`;
@@ -1004,21 +1020,27 @@ function prTrail(cid, name) {
 }
 function prBoard(cid) {
   if (!D.progReady && !D.prsReady) return "";
+  // Collapsed, the board shows only what's filled in (plus 1RMs the program needs); "Show all" lists every preset.
+  const all = !!ui.prAll?.[cid];
+  const p = planFor(profile(cid)).p;
+  const pctNames = D.progReady ? [...new Set((p?.weeks || []).flatMap((w) => w.days.flatMap((d) => d.exercises.filter((e) => hasPct(e.target)).map((e) => e.name))).filter(Boolean))] : [];
+  const missing = pctNames.filter((n) => !maxFor(cid, n)), needed = new Set(missing.map(exKey));
   const row = (name, input, when) => `<div class="pr-row"><span class="pr-name">${esc(name)}${when ? `<span class="small muted">${fmtDay(when)}</span>` : ""}${prTrail(cid, name)}</span>${input}</div>`;
   const liftRow = (name) => { const m = maxFor(cid, name);
+    if (!all && !m && !needed.has(exKey(name))) return "";
     return row(m ? m.exercise : name, `<span class="row"><input class="t num kg" inputmode="decimal" aria-label="${esc(name)} 1RM in kg" data-change="pr-kg" data-cid="${cid}" data-ex="${esc(m ? m.exercise : name)}" value="${m ? +m.kg : ""}"><span class="small">kg</span></span>`, m?.tested_on); };
   const setRow = (cat, name, kind) => { const r = prFor(cid, name), [ph, mode] = KINDS[kind];
+    if (!all && !r) return "";
     return row(r ? r.name : name, `<input class="t num pr-in" inputmode="${mode}" placeholder="${ph}" aria-label="${esc(name)} PR" data-change="pr-val" data-cid="${cid}" data-cat="${cat}" data-kind="${kind}" data-name="${esc(r ? r.name : name)}" value="${esc(r?.value)}">`, r?.scored_on); };
-  const group = (title, note, rows) => `<div class="pr-group"><div class="kicker">${title}${note ? ` <span class="muted">${note}</span>` : ""}</div><div class="pr-grid">${rows.join("")}</div></div>`;
-  let out = "";
+  const group = (title, note, rows) => { const shown = rows.filter(Boolean);
+    return `<div class="pr-group"><div class="kicker">${title}${note ? ` <span class="muted">${note}</span>` : ""}</div>${shown.length ? `<div class="pr-grid">${shown.join("")}</div>` : '<p class="small muted">None yet.</p>'}</div>`; };
+  let out = "", filled = 0;
   if (D.progReady) {
     const presets = new Set(Object.values(PR_LIFTS).flat().map(exKey));
     const others = D.maxes.filter((m) => m.client_id === cid && !presets.has(exKey(m.exercise))).map((m) => m.exercise);
-    const p = planFor(profile(cid)).p;
-    const pctNames = [...new Set((p?.weeks || []).flatMap((w) => w.days.flatMap((d) => d.exercises.filter((e) => hasPct(e.target)).map((e) => e.name))).filter(Boolean))];
-    const missing = pctNames.filter((n) => !maxFor(cid, n));
-    out += group("Strength", "1RM", [...PR_LIFTS.Strength, ...others].map(liftRow)) + group("Olympic lifting", "1RM", PR_LIFTS.Olympic.map(liftRow));
-    out += `${missing.length ? `<p class="small muted">Missing for this program: ${missing.map(esc).join(", ")}</p>` : ""}
+    filled += D.maxes.filter((m) => m.client_id === cid).length;
+    out += group("Strength", "1RM", [...PR_LIFTS.Strength, ...others, ...missing.filter((n) => !presets.has(exKey(n)))].map(liftRow)) + group("Olympic lifting", "1RM", PR_LIFTS.Olympic.map(liftRow));
+    if (all) out += `${missing.length ? `<p class="small muted">Missing for this program: ${missing.map(esc).join(", ")}</p>` : ""}
       <div class="row pr-add"><input class="t" id="max-new-ex-${cid}" list="max-names-${cid}" maxlength="80" placeholder="Other lift, e.g. Box Squat" aria-label="Lift">
         <input class="t num kg" id="max-new-kg-${cid}" inputmode="decimal" placeholder="kg" aria-label="1RM in kg">
         <button class="btn small" data-act="max-save" data-cid="${cid}" data-in="max-new-kg-${cid}" data-exin="max-new-ex-${cid}">Add</button></div>
@@ -1027,14 +1049,16 @@ function prBoard(cid) {
   if (D.prsReady) {
     const sets = (cat) => { const names = new Set(PR_SETS[cat].map(([n]) => exKey(n)));
       return [...PR_SETS[cat], ...D.prs.filter((r) => r.client_id === cid && r.category === cat && !names.has(exKey(r.name))).map((r) => [r.name, "score"])]; };
+    filled += D.prs.filter((r) => r.client_id === cid).length;
     out += group("Gymnastics", "max unbroken", sets("gymnastics").map(([n, k]) => setRow("gymnastics", n, k)))
       + group("Benchmarks", "", sets("benchmark").map(([n, k]) => setRow("benchmark", n, k)));
-    out += `<div class="row pr-add"><input class="t" id="pr-new-name-${cid}" maxlength="80" placeholder="Other, e.g. Amanda" aria-label="PR name">
+    if (all) out += `<div class="row pr-add"><input class="t" id="pr-new-name-${cid}" maxlength="80" placeholder="Other, e.g. Amanda" aria-label="PR name">
         <select class="t pr-cat" id="pr-new-cat-${cid}" aria-label="Type"><option value="benchmark">Benchmark</option><option value="gymnastics">Gymnastics</option></select>
         <input class="t num pr-in" id="pr-new-val-${cid}" placeholder="score" aria-label="PR">
         <button class="btn small" data-act="pr-add" data-cid="${cid}">Add</button></div>`;
   } else if (isCoach()) out += '<p class="small muted">Gymnastics and benchmark PRs show here once run-0011-prs.sql has been run in Supabase.</p>';
-  return `<section class="stack prs"><div class="section-head"><h2>PRs</h2><span class="muted small">Clear a box to remove it. Percentages in the program use the 1RMs.</span></div>${out}</section>`;
+  const toggle = `<button class="btn small" data-act="pr-all" data-cid="${cid}">${all ? "Show filled only" : filled ? "Show all / add" : "Add PRs"}</button>`;
+  return `<section class="stack prs"><div class="section-head"><h2>PRs</h2>${toggle}</div>${all ? '<p class="small muted">Clear a box to remove it. Percentages in the program use the 1RMs.</p>' : ""}${out}${all ? `<div class="row">${toggle}</div>` : ""}</section>`;
 }
 async function savePr(cid, name, cat, val) {
   const rows = await api.setPr(cid, name, cat, val);
@@ -1469,6 +1493,7 @@ document.addEventListener("click", async (ev) => {
       ui.ckEdit = false;
       break;
     }
+    case "pr-all": go(() => { (ui.prAll ||= {})[b.dataset.cid] = !ui.prAll[b.dataset.cid]; }); if (!ui.prAll[b.dataset.cid]) document.querySelector(".prs")?.scrollIntoView(); break;
     case "ck-edit": go(() => (ui.ckEdit = true)); break;
     case "timer": openTimer(); break;
     case "timer-ex": { const e = logFor(ui.logKey)?.day.exercises.find((x) => x.id === b.dataset.ex); if (e) openTimer(presetFor([e.name, e.section, e.score, e.reps, e.note].join(" "))); break; }
