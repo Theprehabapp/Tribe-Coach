@@ -299,3 +299,24 @@ select.t.pr-cat { width: auto; }
 .pr-was { font-weight: 400; }
 .score-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 .score-row .f { flex: 0 1 180px; }
+
+/* Daily check-in */
+.ck-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; }
+.ck-label { display: grid; }
+.seg.ck button { min-width: 38px; min-height: 36px; font-size: 15px; padding: 5px 8px; }
+.ck-chips { gap: 6px; }
+
+/* Workout timer: a sheet above the tabs that stays while the athlete logs */
+.timer { position: fixed; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); z-index: 6; background: var(--surface); border-top: 1px solid var(--rule); box-shadow: 0 -8px 24px rgba(0,0,0,.25); padding: 12px 16px 14px; display: grid; gap: 10px; max-width: 720px; margin: 0 auto; border-radius: 16px 16px 0 0; }
+.timer[hidden] { display: none; }
+.tm-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.tm-face { text-align: center; display: grid; gap: 2px; }
+.tm-big { font-family: var(--display); font-weight: 800; font-size: 64px; line-height: 1; letter-spacing: -.02em; }
+.tm-face.lead .tm-big, .tm-face.rest .tm-big { color: var(--muted); }
+.tm-face.done .tm-big { color: var(--green); }
+.tm-ctl .btn { flex: 1; }
+.timer .row .f { flex: 1 1 90px; }
+.tm-quick .btn { flex: 1; }
+body.timer-open main#app { padding-bottom: 300px; }
+@media (min-width: 1100px) { .timer { bottom: 0; left: 96px; } }
+.offline-bar { background: var(--surface-2); border: 1px solid var(--rule); border-radius: 10px; padding: 8px 12px; margin-bottom: 12px; }
