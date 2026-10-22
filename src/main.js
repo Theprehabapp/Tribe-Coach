@@ -6,6 +6,7 @@ import { prepareVideo, checkVideo, warmUp } from "./upload.js";
 import * as notify from "./notify.js";
 import { liftSets, series, records, newPRs } from "./progress.js";
 import { PR_LIFTS, PR_SETS, KINDS, validScore, scoreKind, prTarget, beats } from "./scores.js";
+import { openTimer, closeTimer, presetFor, restSecs } from "./timer.js";
 import {
   FEEDBACK_HOURS, DOW_LONG, W1_LINE, ymd, fmtDay, fmtLong, fmtTime,
   dueAt, timeLeft, weekOf, sessionDate, rxLine, bumpTarget, blockLabels, exKey, hasPct, pctLoad,
@@ -17,7 +18,7 @@ const app = document.getElementById("app");
 const tabsEl = document.getElementById("tabs");
 
 // All data the signed-in person may see, loaded once and kept in sync as they act.
-let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false, teams: [], teamsReady: false, socialReady: false, prs: [], prHistory: [], prsReady: false };
+let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false, teams: [], teamsReady: false, socialReady: false, prs: [], prHistory: [], prsReady: false, checkins: [], checkinsReady: false };
 let me = null; // signed-in profile
 let ui = { tab: null, view: null, programId: null, week: 0, clientId: null, logKey: null, drafts: {}, file: null, busy: false };
 
@@ -87,6 +88,12 @@ async function boot() {
   start(await api.getSession());
 }
 
+// An athlete's data as last loaded, for opening the app with no connection.
+const snapshot = {
+  key: (uid) => `tribe-snapshot-${uid}`,
+  save(uid, v) { try { localStorage.setItem(this.key(uid), JSON.stringify(v)); } catch { /* too big or blocked: no offline copy */ } },
+  load(uid) { try { return JSON.parse(localStorage.getItem(this.key(uid))); } catch { return null; } },
+};
 let started = null;
 async function start(session) {
   const uid = session?.user?.id || null;
@@ -96,10 +103,21 @@ async function start(session) {
   ui.authMode = "in";
   renderShell('<div class="empty">Loading</div>');
   try {
-    me = await api.myProfile(uid);
-    if (!me) return renderShell(vPending(true));
-    if (!me.approved) return renderShell(vPending(false));
-    D = await api.loadAll();
+    let snap = null;
+    try {
+      me = await api.myProfile(uid);
+      if (!me) return renderShell(vPending(true));
+      if (!me.approved) return renderShell(vPending(false));
+      D = await api.loadAll();
+      ui.offlineData = false;
+      if (!isCoach()) snapshot.save(uid, { me, D });
+    } catch (e) {
+      // No connection: an athlete carries on from the copy saved last time, so they can still log.
+      if (!(snap = snapshot.load(uid))) throw e;
+      ({ me, D } = snap); ui.offlineData = true;
+      addEventListener("online", () => { started = null; start(session); }, { once: true });
+    }
+    flushPending();
     stopChat?.(); stopChat = D.chatReady ? api.onMessage(onIncoming) : null;
     ui.tab = isCoach() ? "queue" : "today";
     render();
@@ -185,7 +203,7 @@ function render() {
   else if (ui.view === "review") html = vReview();
   else if (isCoach()) html = ui.tab === "queue" ? vQueue() : ui.tab === "programs" ? vPrograms() : vClients();
   else html = ui.tab === "today" ? vToday() : ui.tab === "videos" ? vClientVideos() : ui.tab === "chat" ? vClientChat() : vHistory();
-  app.innerHTML = html + footer();
+  app.innerHTML = offlineBar() + html + footer();
   hydrateVideos();
   afterChatPaint();
   filterAth();
@@ -550,6 +568,41 @@ function vTeam() {
     <div class="row">${ui.confirmDelTeam ? `<span>Delete ${esc(t.name)}? Athletes stay, they just leave the team.</span><button class="btn small primary" data-act="team-del-yes">Delete</button><button class="btn small" data-act="team-del-no">Keep it</button>` : '<button class="btn small danger" data-act="team-del">Delete team</button>'}</div>`;
 }
 
+/* ----- daily check-in: the athlete rates sleep, soreness and energy; the coach sees who's flagging ----- */
+const CHECK = [["sleep", "Sleep", "poor", "great"], ["soreness", "Soreness", "very sore", "fresh"], ["energy", "Energy", "flat", "flying"]];
+const checkinOf = (cid, day) => D.checkins.find((c) => c.client_id === cid && c.day === day);
+const lowCheck = (c) => CHECK.some(([k]) => c[k] && c[k] <= 2);
+const checkChips = (c) => CHECK.filter(([k]) => c[k]).map(([k, label]) => `<span class="chip num${c[k] <= 2 ? " red" : ""}">${label} ${c[k]}</span>`).join("");
+function checkinBox() {
+  if (!D.checkinsReady) return "";
+  const c = checkinOf(me.id, today()) || {};
+  if (CHECK.every(([k]) => c[k]) && !ui.ckEdit) return `<section class="card checkin"><div class="row spread"><span class="row ck-chips"><strong>Checked in</strong>${checkChips(c)}</span><button class="link small" data-act="ck-edit">Change</button></div></section>`;
+  return `<section class="card stack checkin"><div class="row spread"><h3>How are you today?</h3>${c.day ? '<span class="chip green">Sent to your coach</span>' : ""}</div>
+    ${CHECK.map(([k, label, lo, hi]) => `<div class="ck-row"><span class="ck-label"><strong>${label}</strong><span class="small muted">1 ${lo}, 5 ${hi}</span></span>
+      <div class="seg ck" role="group" aria-label="${label}">${[1, 2, 3, 4, 5].map((n) => `<button data-act="checkin" data-k="${k}" data-v="${n}" aria-pressed="${c[k] === n}">${n}</button>`).join("")}</div></div>`).join("")}
+    <input class="t" id="ck-note" data-change="ck-note" maxlength="300" placeholder="Anything your coach should know? (optional)" aria-label="Note for your coach" value="${esc(c.note)}"></section>`;
+}
+async function saveCheckin(patch) {
+  const day = today(), cur = checkinOf(me.id, day), row = { client_id: me.id, day, sleep: null, soreness: null, energy: null, note: "", ...cur, ...patch };
+  D.checkins = [row, ...D.checkins.filter((c) => c !== cur)];
+  try { await api.saveCheckin(row); } catch (err) { fail(err, "Your check-in"); }
+}
+// Coach, Clients tab: today's check-ins, anyone scoring 1 or 2 first.
+function checkinsToday() {
+  if (!D.checkinsReady) return "";
+  const list = clients().filter((c) => c.approved).map((c) => [c, checkinOf(c.id, today())]).filter(([, k]) => k).sort(([, a], [, b]) => lowCheck(b) - lowCheck(a));
+  const low = list.filter(([, k]) => lowCheck(k)).length;
+  return `<section class="stack"><div class="section-head"><h2>Check-ins today</h2><span class="small muted num">${list.length ? `${list.length} in${low ? `, ${low} flagging` : ""}` : "None yet"}</span></div>
+    ${list.length ? `<div class="list">${list.map(([c, k]) => `<button class="item" data-act="open-client" data-id="${c.id}"><div class="row spread"><strong>${esc(c.name || c.email)}</strong><span class="row ck-chips">${checkChips(k)}</span></div>${k.note ? `<p class="small">"${esc(k.note)}"</p>` : ""}</button>`).join("")}</div>` : ""}</section>`;
+}
+// Coach, athlete profile: their last two weeks of check-ins.
+function checkinHistory(cid) {
+  if (!D.checkinsReady) return "";
+  const list = D.checkins.filter((c) => c.client_id === cid).slice(0, 14);
+  return `<section class="stack"><div class="section-head"><h2>Check-ins</h2><span class="small muted">1 is worst, 5 is best</span></div>
+    ${list.length ? `<div class="list">${list.map((k) => `<div class="item static"><div class="row spread"><strong class="small">${fmtDay(k.day)}</strong><span class="row ck-chips">${checkChips(k)}</span></div>${k.note ? `<p class="small">"${esc(k.note)}"</p>` : ""}</div>`).join("")}</div>` : '<p class="small muted">No check-ins yet.</p>'}</section>`;
+}
+
 /* ----- coach: clients ----- */
 function vClients() {
   const pending = clients().filter((c) => !c.approved);
@@ -557,6 +610,7 @@ function vClients() {
     <p class="muted small">To add a client, send them this app's link. They create an account with their email and a password, then appear below for you to approve.</p></section>`;
   if (pending.length) out += `<section class="stack"><div class="section-head"><h2>Waiting for approval</h2></div><div class="list">${pending.map((c) =>
     `<div class="item static"><div class="row spread"><div><strong>${esc(c.name || "No name")}</strong><p class="small muted">${esc(c.email)}</p></div><button class="btn small primary" data-act="approve" data-id="${c.id}">Approve</button></div></div>`).join("")}</div></section>`;
+  out += checkinsToday();
   if (D.teamsReady) out += `<section class="stack"><div class="section-head"><h2>Teams</h2><button class="btn small" data-act="team-new">New team</button></div>
     ${D.teams.length ? `<div class="list">${D.teams.map((t) => { const n = clients().filter((c) => c.team_id === t.id).length, p = program(t.program_id);
       return `<button class="item" data-act="open-team" data-id="${t.id}"><div class="row spread"><h3>${esc(t.name)}</h3><span class="chip num">${n} athlete${n === 1 ? "" : "s"}</span></div><p class="small muted">${p ? esc(p.name) : "No program"}${t.start_date ? `, from ${fmtDay(t.start_date)}` : ""}</p></button>`; }).join("")}</div>`
@@ -603,7 +657,7 @@ function vClientDetail() {
   if (tab === "library") return out + vLibrary(c);
   out += `<section class="stack">
     <label class="f">Goal<input class="t" id="c-goal" data-input="c-goal" value="${esc(c.goal)}"></label>
-    ${programBox(c)}</section>${prBoard(c.id)}${progressBox(c.id)}`;
+    ${programBox(c)}</section>${checkinHistory(c.id)}${prBoard(c.id)}${progressBox(c.id)}`;
   const logs = D.logs.filter((l) => l.client_id === c.id);
   out += `<section class="stack"><div class="section-head"><h2>Logged sessions</h2><span class="muted small num">${logs.length}</span></div>${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Nothing logged yet.</div>'}</section>`;
   out += `<div class="row">${ui.confirmRevoke === c.id
@@ -832,7 +886,8 @@ async function hydrateBoards() {
 const logTitle = (l) => `${program(l.program_id)?.weeks[l.week]?.days.find((d) => d.id === l.day_id)?.name || "Session"}, ${fmtDay(l.date)}`;
 
 /* ----- client: training ----- */
-function vToday() {
+function vToday() { const h = vTodayPlan(), i = h.indexOf("</section>") + 10; return i > 9 ? h.slice(0, i) + checkinBox() + h.slice(i) : checkinBox() + h; }
+function vTodayPlan() {
   const { p, start } = planFor(me);
   let out = `<section class="hero"><div class="kicker">Hey ${esc(me.name || "there")}</div>`;
   if (!p) return out + `<h1>No program yet</h1><p class="muted">Your coach hasn't assigned one. Check back soon.</p></section>`;
@@ -869,11 +924,49 @@ function touchLog(l) {
   if (!D.logs.includes(l)) { D.logs.unshift(l); ui.draftLog = null; }
   return l;
 }
+// Every log change is kept on the phone until the server has it, so a session logged with no signal
+// isn't lost: it sends when the connection comes back (or the next time the app opens).
+const pendKey = () => `tribe-pending-logs-${me?.id}`;
+const pending = {
+  all() { try { return JSON.parse(localStorage.getItem(pendKey())) || {}; } catch { return {}; } },
+  write(m) { try { Object.keys(m).length ? localStorage.setItem(pendKey(), JSON.stringify(m)) : localStorage.removeItem(pendKey()); } catch { /* storage full or blocked */ } },
+  put(l) { const m = this.all(); m[l.id] = { log: structuredClone(l), at: Date.now() }; this.write(m); },
+  drop(id, at) { const m = this.all(); if (m[id] && m[id].at <= at) { delete m[id]; this.write(m); } },
+  count() { return Object.keys(this.all()).length; },
+};
+async function sendLog(l) {
+  const at = Date.now();
+  await api.saveLog(l);
+  pending.drop(l.id, at);
+}
 function saveLogSoon(l, now) {
   touchLog(l);
-  const go = () => api.saveLog(l).catch((e) => fail(e, "Your log"));
+  pending.put(l);
+  const go = () => sendLog(l).then(() => { if (ui.offline) { ui.offline = false; render(); } return "sent"; }, (e) => {
+    console.error(e);
+    if (!ui.offline) { ui.offline = true; render(); }
+    return "queued";
+  });
   if (now) { clearTimeout(timers["log"]); return go(); }
   debounce("log", go);
+}
+// Sends whatever is waiting. Logs waiting on this phone also replace the older copies loaded from the server.
+async function flushPending() {
+  if (!me || isCoach()) return;
+  const waiting = Object.values(pending.all()).map((x) => x.log);
+  if (!waiting.length) return;
+  for (const l of waiting) { const i = D.logs.findIndex((x) => x.id === l.id); if (i >= 0) D.logs[i] = l; else D.logs.unshift(l); }
+  let left = 0;
+  for (const l of waiting) await sendLog(l).catch(() => left++);
+  const was = ui.offline; ui.offline = left > 0;
+  if (was !== ui.offline || !left) { if (was && !left) toast("Back online. Your sessions are sent."); render(); }
+}
+addEventListener("online", () => { flushPending(); });
+setInterval(() => { if (pending.count()) flushPending(); }, 30000);
+function offlineBar() {
+  const n = !isCoach() && pending.count();
+  if (!n && !ui.offlineData) return "";
+  return `<div class="offline-bar small">${ui.offlineData ? "No connection. Showing what was on this phone when you last opened the app. " : ""}${n ? `${n} session${n > 1 ? "s" : ""} saved on this phone, sending when you're back online.` : ""}</div>`;
 }
 // "Your 1RM is 120 kg, so 85-90 kg today", or a box to add the 1RM when the target is a percentage.
 function loadLine(cid, e) {
@@ -1016,18 +1109,26 @@ function scoreRow(e, en) {
     <input class="t num" id="score-${e.id}" inputmode="${mode}" placeholder="${ph}" data-input="result" data-ex="${e.id}" value="${esc(en.result)}"></label>
     ${tgt ? `<span class="small muted">${cur ? `PR to beat: ${esc(cur.value)}` : "Goes on your PR board"}</span>` : ""}</div>`;
 }
+// Ticking a set starts the prescribed rest, except between the exercises of a superset.
+function restAfter(exId) {
+  const day = logFor(ui.logKey)?.day, i = day?.exercises.findIndex((x) => x.id === exId);
+  if (!day || i < 0) return;
+  const e = day.exercises[i], next = day.exercises[i + 1], t = restSecs(e.rest);
+  if (!t || (next && e.block && next.block === e.block)) return;
+  openTimer({ mode: "rest", total: t, label: "Rest" }, true);
+}
 function vLog() {
   const r = logFor(ui.logKey);
   if (!r) { ui.view = null; return vToday(); }
   const { l, day } = r;
-  let out = `<div class="row"><button class="link" data-act="back">Back</button></div><section class="hero"><div class="kicker">Week ${ui.logKey.w + 1}, ${fmtLong(l.date)}</div><h1>${esc(day.name)}</h1>
+  let out = `<div class="row spread"><button class="link" data-act="back">Back</button><button class="btn small" data-act="timer">Timer</button></div><section class="hero"><div class="kicker">Week ${ui.logKey.w + 1}, ${fmtLong(l.date)}</div><h1>${esc(day.name)}</h1>
     ${day.coachNote ? `<div class="feedback"><span class="kicker">From your coach</span><p class="small">${esc(day.coachNote)}</p></div>` : ""}</section>`;
   const labels = blockLabels(day.exercises);
   day.exercises.forEach((e, ei) => {
     const en = l.entries.find((x) => x.exId === e.id) || (l.entries[ei] = { exId: e.id, sets: [{ reps: "", kg: "", rpe: "", done: false }] });
     const ins = [e.note, e.rest].filter(Boolean).join("\n"), vf = VAL_METRICS.includes(e.metric) ? "val" : "kg";
     const lb = labels[ei], mates = lb && /\d$/.test(lb) ? labels.filter((x) => x && x[0] === lb[0]) : [];
-    out += `${e.section ? `<div class="section-tag"><span class="kicker">${esc(e.section)}</span>${e.score ? `<span class="chip">${esc(e.score)}</span>` : ""}</div>` : ""}<section class="card${mates.length ? " superset" : ""}"><div class="row spread"><h3>${lb ? `<span class="blk">${lb}</span> ` : ""}${esc(e.name)}</h3><button class="link small" data-act="film" data-ex="${esc(e.name)}">Film a set</button></div>
+    out += `${e.section ? `<div class="section-tag"><span class="kicker">${esc(e.section)}</span>${e.score ? `<span class="chip">${esc(e.score)}</span>` : ""}</div>` : ""}<section class="card${mates.length ? " superset" : ""}"><div class="row spread"><h3>${lb ? `<span class="blk">${lb}</span> ` : ""}${esc(e.name)}</h3><span class="row">${presetFor([e.name, e.section, e.score, e.reps, e.note].join(" ")) ? `<button class="link small" data-act="timer-ex" data-ex="${e.id}">Timer</button>` : ""}<button class="link small" data-act="film" data-ex="${esc(e.name)}">Film a set</button></span></div>
       ${mates.length && lb.endsWith("1") ? `<p class="small muted">Superset: do ${mates.join(" and ")} back to back, then rest.</p>` : ""}
       ${rxLine(e) ? `<p class="rx">${esc(rxLine(e))}</p>` : ""}${loadLine(me.id, e)}${ins ? `<p class="ins">${esc(ins)}</p>` : ""}${demoBit(e.name)}
       <div class="colhead"><span>Set</span><span>Reps</span><span>${vf === "val" ? esc(e.metric) : "kg"}</span><span>RPE</span><span></span></div>
@@ -1113,7 +1214,7 @@ document.addEventListener("click", async (ev) => {
   const p = program(ui.programId), wk = p?.weeks[ui.week];
   const progEdit = (fn) => { fn(); render(); saveProgramSoon(); };
   switch (act) {
-    case "signout": stopChat?.(); stopChat = null; await api.signOut(); started = null; me = null; ui.authMode = "in"; renderShell(vSignIn()); break;
+    case "signout": stopChat?.(); stopChat = null; try { localStorage.removeItem(snapshot.key(me.id)); } catch { /* blocked */ } await api.signOut(); started = null; me = null; ui.authMode = "in"; renderShell(vSignIn()); break;
     case "auth-mode": ui.authEmail = document.getElementById("si-email")?.value.trim() || ui.authEmail; ui.authMode = v; renderShell(vSignIn()); break;
     case "password": go(() => (ui.view = "password")); scrollTo(0, 0); break;
     case "tab":
@@ -1358,10 +1459,24 @@ document.addEventListener("click", async (ev) => {
     case "revoke-no": go(() => (ui.confirmRevoke = null)); break;
     case "revoke-yes": await patchProfile(ui.clientId, { approved: false }, "Access removed."); ui.view = null; ui.confirmRevoke = null; render(); break;
     case "open-log": go(() => { ui.logKey = { w: +b.dataset.w, id }; ui.view = "log"; }); scrollTo(0, 0); break;
+    case "checkin": {
+      const k = b.dataset.k, v = +b.dataset.v;
+      b.closest(".seg").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      await saveCheckin({ [k]: v });
+      // Stays open for a note; it shows as one line next time the page draws.
+      const head = b.closest(".checkin")?.querySelector(".row.spread");
+      if (head && !head.querySelector(".chip")) head.insertAdjacentHTML("beforeend", '<span class="chip green">Sent to your coach</span>');
+      ui.ckEdit = false;
+      break;
+    }
+    case "ck-edit": go(() => (ui.ckEdit = true)); break;
+    case "timer": openTimer(); break;
+    case "timer-ex": { const e = logFor(ui.logKey)?.day.exercises.find((x) => x.id === b.dataset.ex); if (e) openTimer(presetFor([e.name, e.section, e.score, e.reps, e.note].join(" "))); break; }
     case "add-score": go(() => { (ui.scoreOpen ||= {})[b.dataset.ex] = true; }); document.getElementById(`score-${b.dataset.ex}`)?.focus(); break;
     case "tick": {
       const { l } = logFor(ui.logKey); const s = l.entries.find((x) => x.exId === b.dataset.ex).sets[+b.dataset.s];
       s.done = !s.done; render(); saveLogSoon(l);
+      if (s.done) restAfter(b.dataset.ex);
       break;
     }
     case "finish-log": {
@@ -1370,9 +1485,10 @@ document.addEventListener("click", async (ev) => {
       const ok = await saveLogSoon(l, true);
       const prs = newPRs(l, clientLogs(me.id), nameOf);
       ui.boards = {}; // fresh numbers next time a leaderboard shows
-      for (const w of wins) await savePr(me.id, w.name, w.cat, w.value).catch((err) => fail(err, "PR"));
+      if (ok === "sent") for (const w of wins) await savePr(me.id, w.name, w.cat, w.value).catch((err) => fail(err, "PR"));
       const said = [...prs.map((x) => x.kind === "heaviest" ? `${x.name} ${x.kg} kg x ${x.reps}` : `${x.name} est. 1RM ${x.e1rm} kg`), ...wins.map((w) => `${w.name} ${w.value}`)];
-      if (ok !== undefined) { go(() => (ui.view = null)); toast(said.length ? `Session logged. New PR${said.length > 1 ? "s" : ""}: ${said.join(", ")}.` : "Session logged."); scrollTo(0, 0); }
+      go(() => (ui.view = null));
+      toast(ok === "queued" ? "Saved on your phone. It sends when you're back online." : said.length ? `Session logged. New PR${said.length > 1 ? "s" : ""}: ${said.join(", ")}.` : "Session logged."); scrollTo(0, 0);
       break;
     }
     case "film": go(() => { ui.filmEx = b.dataset.ex; ui.tab = "videos"; ui.view = null; }); scrollTo(0, 0); break;
@@ -1477,6 +1593,7 @@ document.addEventListener("change", async (ev) => {
     if (k === "demo_url" && val && !/^https:\/\//i.test(val)) return toast("The link needs to start with https://");
     try { const row = await api.saveExercise({ ...x, [k]: val }); D.exercises = D.exercises.map((y) => (y.id === row.id ? row : y)); toast("Saved."); } catch (err) { fail(err, "Exercise"); }
   }
+  if (a === "ck-note") { await saveCheckin({ note: t.value.trim().slice(0, 300) }); toast("Sent to your coach."); }
   if (a === "pr-kg") {
     const raw = t.value.trim(), kg = parseFloat(raw.replace(",", "."));
     if (raw && !(kg > 0 && kg < 1000)) return toast("Enter the 1RM in kg, e.g. 120.");

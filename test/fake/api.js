@@ -1,12 +1,12 @@
 // In-memory stand-in for src/api.js, used only by the UI smoke test (vite --mode fake).
 import { exampleProgram } from "../../src/example.js";
 export const configured = true;
-export const MAX_VIDEO_MB = 50;
+export const MAX_VIDEO_MB = 200;
 const role = new URLSearchParams(location.search).get("as") || "coach";
 const coach = { id: "c", email: "coach@x", name: "Coach", role: "coach", approved: true, goal: "" };
 const amy = { id: "a", email: "amy@x", name: "Amy", role: "client", approved: true, goal: "", program_id: null, start_date: "2026-09-28" };
 const ben = { id: "b", email: "ben@x", name: "Ben", role: "client", approved: false, goal: "" };
-const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [], prs: [], prHistory: [] };
+const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [], prs: [], prHistory: [], checkins: [] };
 if (new URLSearchParams(location.search).get("seed")) {
   db.programs.push({ id: "p-seed", ...exampleProgram() }); amy.program_id = "p-seed";
   db.logs.push({ id: "l-seed", client_id: "a", program_id: "p-seed", week: 0, day_id: db.programs[0].weeks[0].days[0].id, date: "2026-09-28", done: true, note: "", entries: [] });
@@ -29,6 +29,9 @@ if (new URLSearchParams(location.search).get("bench") && db.programs.length) db.
   { id: "fran" + i, block: "D", name: "Fran", sets: "1", reps: "21-15-9", target: "", cue: "", rest: "", note: "Thrusters 43 kg, pull ups" },
   { id: "row" + i, block: "E", name: "Row", sets: "3", reps: "1:00", target: "", cue: "", rest: "", note: "", score: "(FOR WATTS)", metric: "Watts", rows: [{ reps: "1:00", val: "300" }, { reps: "1:00", val: "300" }, { reps: "1:00", val: "300" }] },
   { id: "t2b" + i, block: "F", name: "Toes to Bar", sets: "1", reps: "Max unbroken", target: "", cue: "", rest: "", note: "" }));
+// ?checkin=1: Amy checked in today (a bad night) and yesterday.
+if (new URLSearchParams(location.search).get("checkin")) { const d = (n) => { const x = new Date(Date.now() - n * 864e5); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
+  db.checkins.push({ client_id: "a", day: d(0), sleep: 2, soreness: 4, energy: 3, note: "Up with the baby" }, { client_id: "a", day: d(1), sleep: 4, soreness: 3, energy: 4, note: "" }); }
 // ?hist=1: four weeks of Amy's squats and deadlifts, for the progress chart and PRs.
 if (new URLSearchParams(location.search).get("hist")) [["2026-09-14", 100, 140], ["2026-09-21", 105, 145], ["2026-09-28", 102.5, 150], ["2026-10-05", 110, 150]].forEach(([date, sq, dl], i) =>
   db.logs.push({ id: "h" + i, client_id: "a", program_id: "gone", week: i, day_id: "x", date, done: true, note: "", entries: [
@@ -42,8 +45,8 @@ export const signUp = async () => ({ session: null });
 export const sendReset = async () => {};
 export const setPassword = async () => {};
 export const signOut = async () => {};
-export const myProfile = async () => meRow;
-export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips"), progReady: true, teamsReady: true, socialReady: true, prsReady: !new URLSearchParams(location.search).get("noprs") });
+export const myProfile = async () => { if (window.__offline) throw new TypeError("Failed to fetch"); return meRow; };
+export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips"), progReady: true, teamsReady: true, socialReady: true, prsReady: !new URLSearchParams(location.search).get("noprs"), checkinsReady: true });
 const listeners = [];
 export const onMessage = (fn) => { listeners.push(fn); return () => {}; };
 window.__incoming = (body, video_id = null) => { const m = { id: "m" + Math.random(), client_id: "a", sender_id: role === "coach" ? "a" : "c", body, video_id, clip_path: null, created_at: new Date().toISOString(), read_at: null }; db.messages.push(m); listeners.forEach((f) => f(structuredClone(m))); };
@@ -55,7 +58,7 @@ export const updateProfile = async (id, patch) => Object.assign(db.profiles.find
 export const createProgram = async (p) => { const row = { id: "p" + db.programs.length, ...structuredClone(p) }; db.programs.push(row); return structuredClone(row); };
 export const saveProgram = async () => {};
 export const deleteProgram = async () => {};
-export const saveLog = async (l) => l;
+export const saveLog = async (l) => { if (window.__offline) throw new TypeError("Failed to fetch"); (window.__saved ||= []).push(structuredClone(l)); return l; };
 export const uploadVideo = async (uid, file, meta) => (window.__upload = file, { id: "v" + Date.now(), client_id: uid, exercise: meta.exercise, note: meta.note, slot: meta.slot, status: "waiting", verdict: "", feedback: "", uploaded_at: new Date().toISOString(), storage_path: "a/x.mp4" });
 export const videoUrl = async () => "data:video/mp4;base64,";
 export const reviewVideo = async (id, verdict, feedback) => { const v = db.videos.find((x) => x.id === id) || { id, client_id: "a", exercise: "Back Squat", uploaded_at: new Date().toISOString(), storage_path: "a/x.mp4" }; Object.assign(v, { status: "reviewed", verdict, feedback, reviewed_at: new Date().toISOString() }); return structuredClone(v); };
@@ -82,6 +85,7 @@ export const removeFile = async () => {};
 const TODAY = "2026-10-20";
 const notePr = (person, name, category, val) => { db.prHistory = db.prHistory.filter((x) => !(x.client_id === person && x.name.toLowerCase() === name.toLowerCase() && x.scored_on === TODAY)); if (val != null) db.prHistory.push({ client_id: person, name, category, value: String(val), scored_on: TODAY }); };
 export const prHistory = async (person) => structuredClone(db.prHistory.filter((x) => x.client_id === person));
+export const saveCheckin = async (c) => { db.checkins = db.checkins.filter((x) => !(x.client_id === c.client_id && x.day === c.day)); db.checkins.unshift(structuredClone(c)); window.__checkin = structuredClone(c); return structuredClone(c); };
 export const setPr = async (person, name, category, val) => { db.prs = db.prs.filter((r) => !(r.client_id === person && r.name.toLowerCase() === name.toLowerCase())); if (val) db.prs.push({ client_id: person, name, category, value: val, scored_on: TODAY }); notePr(person, name, category, val || null); window.__pr = { person, name, category, val }; return structuredClone(db.prs.filter((r) => r.client_id === person)); };
 export const setMax = async (person, ex, kg) => { db.maxes = db.maxes.filter((m) => !(m.client_id === person && m.exercise.toLowerCase() === ex.toLowerCase())); if (kg != null) db.maxes.push({ client_id: person, exercise: ex, kg, tested_on: "2026-10-16" }); notePr(person, ex, "lift", kg); window.__max = { person, ex, kg }; return structuredClone(db.maxes.filter((m) => m.client_id === person)); };
 export const createTeam = async (t) => { const row = { id: "t" + db.teams.length, program_id: null, start_date: null, ...structuredClone(t) }; db.teams.push(row); return structuredClone(row); };

@@ -7,7 +7,7 @@ export const configured = Boolean(url && key);
 export const sb = configured ? createClient(url, key) : null;
 
 const BUCKET = "videos";
-export const MAX_VIDEO_MB = 50;
+export const MAX_VIDEO_MB = 200;
 
 function check({ data, error }) {
   if (error) throw error;
@@ -33,7 +33,7 @@ export async function myProfile(uid) {
 
 // RLS decides what comes back: the coach gets everyone, a client gets their own rows and assigned program.
 export async function loadAll() {
-  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs, prHistory] = await Promise.all([
+  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs, prHistory, checkins] = await Promise.all([
     sb.from("profiles").select("*").order("created_at").then(check),
     sb.from("programs").select("*").order("created_at", { ascending: false }).then(check),
     sb.from("logs").select("*").order("date", { ascending: false }).then(check),
@@ -50,11 +50,13 @@ export async function loadAll() {
     // Gymnastics and benchmark PRs arrived with migration 0011.
     sb.from("prs").select("*").order("name").then(check).catch(() => null),
     sb.from("pr_history").select("*").then(check).catch(() => null),
+    // Daily check-ins arrived with migration 0012. The last 4 weeks are plenty.
+    sb.from("checkins").select("*").gte("day", new Date(Date.now() - 28 * 864e5).toISOString().slice(0, 10)).order("day", { ascending: false }).then(check).catch(() => null),
   ]);
   // Labelled breakdown clips arrived with migration 0006; until it's run, one breakdown per video as before.
   return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages, clipsReady: videos.some((v) => "clips" in v),
     exercises: exercises || [], maxes: maxes || [], progReady: !!exercises && !!maxes,
-    teams: teams || [], teamsReady: !!teams, socialReady: social, prs: prs || [], prHistory: prHistory || [], prsReady: !!prs && !!prHistory };
+    teams: teams || [], teamsReady: !!teams, socialReady: social, prs: prs || [], prHistory: prHistory || [], prsReady: !!prs && !!prHistory, checkins: checkins || [], checkinsReady: !!checkins };
 }
 
 /* ---------- profiles ---------- */
@@ -171,6 +173,11 @@ export async function setPr(person, name, category, val) {
 }
 
 export const prHistory = (person) => sb.from("pr_history").select("*").eq("client_id", person).then(check);
+
+/* ---------- daily check-in ---------- */
+export const saveCheckin = (c) =>
+  sb.from("checkins").upsert({ client_id: c.client_id, day: c.day, sleep: c.sleep, soreness: c.soreness, energy: c.energy, note: c.note, updated_at: new Date().toISOString() })
+    .select().single().then(check);
 
 /* ---------- chat ---------- */
 export const loadMessages = () => sb.from("messages").select("*").order("created_at").then(check);

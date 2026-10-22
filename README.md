@@ -13,7 +13,7 @@ Built with plain JavaScript and Vite. Supabase handles sign-in (email and passwo
 ### 1. Supabase
 
 1. Create a project at [supabase.com](https://supabase.com). Pick the Sydney region.
-2. Open **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql` to `0005_push.sql`). This creates the tables, the access rules and the private `videos` storage bucket (50 MB per file).
+2. Open **SQL Editor** and run each file in `supabase/migrations/` in order (`0001_init.sql` to `0005_push.sql`). This creates the tables, the access rules and the private `videos` storage bucket (50 MB per file; `0013_video_limit.sql` raises it to 200 MB on Supabase Pro).
 3. Go to **Authentication > URL Configuration**. Set **Site URL** to wherever the app is hosted (step 3 below) and add the same address under **Redirect URLs**.
 4. Copy the **Project URL** and the **anon public** key from **Project Settings > API**. Never put the `service_role` key in this app.
 
@@ -118,9 +118,15 @@ Run `supabase/migrations/0008_programming.sql` in the SQL Editor to switch on th
 
 Run `supabase/migrations/0009_teams.sql` to switch on teams and per-athlete programs.
 
+## Athlete tools
+
+- **Daily check-in:** the athlete's Training tab opens with "How are you today?": sleep, soreness and energy from 1 to 5 (5 is best) and an optional note. Your Clients tab lists today's check-ins with anyone scoring 1 or 2 first, and each athlete's profile shows their last two weeks. Run `supabase/migrations/0012_checkins.sql` to switch it on.
+- **Timer:** every session has a **Timer** button: a rest countdown, EMOM, work/rest intervals or a running clock, with beeps for 3, 2, 1 and the screen kept awake. Blocks that say EMOM, E2MOM, "every 90s", AMRAP 12 or FOR TIME get their own **Timer** button, set up for them. Ticking a set starts the prescribed rest (e.g. "Rest 2:00"), except between the exercises of a superset.
+- **No signal:** every change to a session is kept on the phone until it reaches Supabase. With no connection the athlete sees "saved on this phone" and it sends when the connection comes back. An athlete who opens the app with no connection gets their data from the last time it loaded, so they can still log.
+
 ## Video size
 
-Videos are shrunk on the uploader's phone before they're sent: 720p, about 2.5 Mbps, a key frame every second, and the index at the front of the file so playback starts straight away. That's roughly 20 MB a minute instead of 100+ MB. It uses the browser's built-in encoder (WebCodecs, `src/shrink.js`); if a phone can't do it, the original is sent as before and the 50 MB limit applies.
+Videos are shrunk on the uploader's phone before they're sent: 720p, about 2.5 Mbps, a key frame every second, and the index at the front of the file so playback starts straight away. That's roughly 20 MB a minute instead of 100+ MB. It uses the browser's built-in encoder (WebCodecs, `src/shrink.js`); if a phone can't do it, the original is sent as before and the 200 MB limit applies. On Supabase Pro, run `0013_video_limit.sql` and set **Storage, Settings, Upload file size limit** to at least 200 MB; until both are done, Supabase still refuses anything over 50 MB.
 
 ## Storage
 
