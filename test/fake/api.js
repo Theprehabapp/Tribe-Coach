@@ -6,7 +6,7 @@ const role = new URLSearchParams(location.search).get("as") || "coach";
 const coach = { id: "c", email: "coach@x", name: "Coach", role: "coach", approved: true, goal: "" };
 const amy = { id: "a", email: "amy@x", name: "Amy", role: "client", approved: true, goal: "", program_id: null, start_date: "2026-09-28" };
 const ben = { id: "b", email: "ben@x", name: "Ben", role: "client", approved: false, goal: "" };
-const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [], prs: [], prHistory: [], checkins: [] };
+const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [], prs: [], prHistory: [], checkins: [], invites: [] };
 if (new URLSearchParams(location.search).get("seed")) {
   db.programs.push({ id: "p-seed", ...exampleProgram() }); amy.program_id = "p-seed";
   db.logs.push({ id: "l-seed", client_id: "a", program_id: "p-seed", week: 0, day_id: db.programs[0].weeks[0].days[0].id, date: "2026-09-28", done: true, note: "", entries: [] });
@@ -46,7 +46,7 @@ export const sendReset = async () => {};
 export const setPassword = async () => {};
 export const signOut = async () => {};
 export const myProfile = async () => { if (window.__offline) throw new TypeError("Failed to fetch"); return meRow; };
-export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips"), progReady: true, teamsReady: true, socialReady: true, prsReady: !new URLSearchParams(location.search).get("noprs"), checkinsReady: true });
+export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips"), progReady: true, teamsReady: true, socialReady: true, prsReady: !new URLSearchParams(location.search).get("noprs"), checkinsReady: true, invitesReady: true });
 const listeners = [];
 export const onMessage = (fn) => { listeners.push(fn); return () => {}; };
 window.__incoming = (body, video_id = null) => { const m = { id: "m" + Math.random(), client_id: "a", sender_id: role === "coach" ? "a" : "c", body, video_id, clip_path: null, created_at: new Date().toISOString(), read_at: null }; db.messages.push(m); listeners.forEach((f) => f(structuredClone(m))); };
@@ -90,7 +90,16 @@ export const setPr = async (person, name, category, val) => { db.prs = db.prs.fi
 export const setMax = async (person, ex, kg) => { db.maxes = db.maxes.filter((m) => !(m.client_id === person && m.exercise.toLowerCase() === ex.toLowerCase())); if (kg != null) db.maxes.push({ client_id: person, exercise: ex, kg, tested_on: "2026-10-16" }); notePr(person, ex, "lift", kg); window.__max = { person, ex, kg }; return structuredClone(db.maxes.filter((m) => m.client_id === person)); };
 export const createTeam = async (t) => { const row = { id: "t" + db.teams.length, program_id: null, start_date: null, ...structuredClone(t) }; db.teams.push(row); return structuredClone(row); };
 export const saveTeam = async (id, patch) => { const row = db.teams.find((t) => t.id === id); Object.assign(row, patch); window.__team = structuredClone(row); return structuredClone(row); };
-export const deleteTeam = async (id) => { db.teams = db.teams.filter((t) => t.id !== id); };
+export const deleteTeam = async (id) => { db.teams = db.teams.filter((t) => t.id !== id); db.invites = db.invites.filter((i) => i.team_id !== id); };
+export const inviteToTeam = async (team_id, emails) => {
+  for (const email of emails) {
+    const p = db.profiles.find((x) => x.role === "client" && x.email.toLowerCase() === email);
+    if (p) { p.team_id = team_id; p.approved = true; continue; }
+    db.invites = db.invites.filter((i) => i.email !== email).concat({ email, team_id });
+  }
+  return structuredClone({ profiles: db.profiles, invites: db.invites });
+};
+export const uninvite = async (email) => { db.invites = db.invites.filter((i) => i.email !== email); };
 // Same shape as team_board(): best set per athlete per lift, from the fake logs plus two teammates.
 export const teamBoard = async (team) => {
   const mates = [{ client_id: "m1", athlete: "Jack", exercise: "Back Squat", e1rm: 140, kg: 120, reps: 5, day: "2026-10-04" }, { client_id: "m2", athlete: "Issy", exercise: "Back Squat", e1rm: 100, kg: 90, reps: 3, day: "2026-10-03" }, { client_id: "m1", athlete: "Jack", exercise: "Deadlift", e1rm: 190, kg: 180, reps: 2, day: "2026-10-04" }];

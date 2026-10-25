@@ -33,7 +33,7 @@ export async function myProfile(uid) {
 
 // RLS decides what comes back: the coach gets everyone, a client gets their own rows and assigned program.
 export async function loadAll() {
-  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs, prHistory, checkins] = await Promise.all([
+  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs, prHistory, checkins, invites] = await Promise.all([
     sb.from("profiles").select("*").order("created_at").then(check),
     sb.from("programs").select("*").order("created_at", { ascending: false }).then(check),
     sb.from("logs").select("*").order("date", { ascending: false }).then(check),
@@ -52,11 +52,13 @@ export async function loadAll() {
     sb.from("pr_history").select("*").then(check).catch(() => null),
     // Daily check-ins arrived with migration 0012. The last 4 weeks are plenty.
     sb.from("checkins").select("*").gte("day", new Date(Date.now() - 28 * 864e5).toISOString().slice(0, 10)).order("day", { ascending: false }).then(check).catch(() => null),
+    // Team invites by email arrived with migration 0014.
+    sb.from("team_invites").select("*").order("email").then(check).catch(() => null),
   ]);
   // Labelled breakdown clips arrived with migration 0006; until it's run, one breakdown per video as before.
   return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages, clipsReady: videos.some((v) => "clips" in v),
     exercises: exercises || [], maxes: maxes || [], progReady: !!exercises && !!maxes,
-    teams: teams || [], teamsReady: !!teams, socialReady: social, prs: prs || [], prHistory: prHistory || [], prsReady: !!prs && !!prHistory, checkins: checkins || [], checkinsReady: !!checkins };
+    teams: teams || [], teamsReady: !!teams, socialReady: social, prs: prs || [], prHistory: prHistory || [], prsReady: !!prs && !!prHistory, checkins: checkins || [], checkinsReady: !!checkins, invites: invites || [], invitesReady: !!invites };
 }
 
 /* ---------- profiles ---------- */
@@ -72,6 +74,13 @@ export const deleteProgram = (id) => sb.from("programs").delete().eq("id", id).t
 export const createTeam = (t) => sb.from("teams").insert(t).select().single().then(check);
 export const saveTeam = (id, patch) => sb.from("teams").update(patch).eq("id", id).select().single().then(check);
 export const deleteTeam = (id) => sb.from("teams").delete().eq("id", id).then(check);
+// Emails with an account join the team at once; the rest wait as invites (migration 0014). Returns the fresh lists.
+export async function inviteToTeam(team_id, emails) {
+  await sb.from("team_invites").upsert(emails.map((email) => ({ email, team_id })), { onConflict: "email" }).then(check);
+  const [profiles, invites] = await Promise.all([sb.from("profiles").select("*").order("created_at").then(check), sb.from("team_invites").select("*").order("email").then(check)]);
+  return { profiles, invites };
+}
+export const uninvite = (email) => sb.from("team_invites").delete().eq("email", email).then(check);
 
 /* ---------- logs ---------- */
 export const saveLog = (l) =>
