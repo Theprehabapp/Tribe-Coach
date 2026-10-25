@@ -18,7 +18,7 @@ const app = document.getElementById("app");
 const tabsEl = document.getElementById("tabs");
 
 // All data the signed-in person may see, loaded once and kept in sync as they act.
-let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false, teams: [], teamsReady: false, socialReady: false, prs: [], prHistory: [], prsReady: false, checkins: [], checkinsReady: false };
+let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false, teams: [], teamsReady: false, socialReady: false, prs: [], prHistory: [], prsReady: false, checkins: [], checkinsReady: false, invites: [], invitesReady: false };
 let me = null; // signed-in profile
 let ui = { tab: null, view: null, programId: null, week: 0, clientId: null, logKey: null, drafts: {}, file: null, busy: false };
 
@@ -568,8 +568,24 @@ function vTeam() {
     ${athletes.length ? `<div class="list">${athletes.map((c) => { const other = c.team_id && c.team_id !== t.id ? teamOf(c) : null;
       return `<label class="item static row spread"><span><strong>${esc(c.name || c.email)}</strong>${other ? ` <span class="small muted">in ${esc(other.name)}</span>` : ""}${c.program_id ? ' <span class="small muted">has own program</span>' : ""}</span>
         <input type="checkbox" data-change="t-member" data-id="${c.id}"${c.team_id === t.id ? " checked" : ""} aria-label="${esc(c.name || c.email)} in ${esc(t.name)}"></label>`; }).join("")}</div>` : '<div class="empty">No approved athletes yet.</div>'}</section>
+    ${D.invitesReady ? inviteBox(t) : ""}
     <div class="row">${ui.confirmDelTeam ? `<span>Delete ${esc(t.name)}? Athletes stay, they just leave the team.</span><button class="btn small primary" data-act="team-del-yes">Delete</button><button class="btn small" data-act="team-del-no">Keep it</button>` : '<button class="btn small danger" data-act="team-del">Delete team</button>'}</div>`;
 }
+
+// Add athletes by email, before or after they sign up. Waiting emails join this team, approved, when they make an account.
+function inviteBox(t) {
+  const waiting = D.invites.filter((i) => i.team_id === t.id);
+  return `<section class="stack"><div class="section-head"><h2>Add by email</h2>${waiting.length ? `<span class="muted small num">${waiting.length} waiting</span>` : ""}</div>
+    <textarea class="t" id="t-emails" rows="3" placeholder="Paste emails, one per line or separated by commas" aria-label="Athlete emails"></textarea>
+    <div class="row"><button class="btn small primary" data-act="t-invite">Add to ${esc(t.name)}</button></div>
+    <p class="muted small">Anyone with an account joins now. Everyone else joins this team, already approved, the moment they sign up with that email.</p>
+    ${waiting.length ? `<div class="kicker">Waiting to sign up</div><div class="list">${waiting.map((i) => `<div class="item static row spread"><span class="small">${esc(i.email)}</span><button class="btn small ghost" data-act="t-uninvite" data-id="${esc(i.email)}">Remove</button></div>`).join("")}</div>` : ""}</section>`;
+}
+const parseEmails = (text) => {
+  const all = String(text).toLowerCase().split(/[\s,;<>]+/).filter(Boolean);
+  const ok = [...new Set(all.filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)))];
+  return { ok, bad: all.filter((e) => e.includes("@") && !ok.includes(e)) };
+};
 
 /* ----- daily check-in: the athlete rates sleep, soreness and energy; the coach sees who's flagging ----- */
 const CHECK = [["sleep", "Sleep", "poor", "great"], ["soreness", "Soreness", "very sore", "fresh"], ["energy", "Energy", "flat", "flying"]];
@@ -1324,6 +1340,23 @@ document.addEventListener("click", async (ev) => {
     case "team-new":
       try { const row = await api.createTeam({ name: `Team ${D.teams.length + 1}` }); D.teams.push(row); go(() => { ui.view = "team"; ui.teamId = row.id; }); scrollTo(0, 0); }
       catch (err) { fail(err, "Team"); }
+      break;
+    case "t-invite": {
+      const { ok, bad } = parseEmails(document.getElementById("t-emails")?.value || "");
+      if (!ok.length) { toast(bad.length ? `${bad[0]} doesn't look like an email.` : "Paste at least one email."); break; }
+      const before = new Set(clients().filter((c) => c.team_id === ui.teamId).map((c) => c.id));
+      try {
+        const fresh = await api.inviteToTeam(ui.teamId, ok);
+        D.profiles = fresh.profiles; D.invites = fresh.invites;
+        const joined = clients().filter((c) => c.team_id === ui.teamId && !before.has(c.id)).length, waiting = ok.filter((e) => D.invites.some((i) => i.email === e && i.team_id === ui.teamId)).length;
+        render();
+        toast(([joined && `${joined} joined now`, waiting && `${waiting} waiting to sign up`, bad.length && `${bad.length} skipped (not an email)`].filter(Boolean).join(", ") + ".").replace(/^\.$/, "") || "They're already in the team.");
+      } catch (err) { fail(err, "Invite"); }
+      break;
+    }
+    case "t-uninvite":
+      try { await api.uninvite(id); D.invites = D.invites.filter((i) => i.email !== id); render(); toast("Removed."); }
+      catch (err) { fail(err, "Remove"); }
       break;
     case "open-team": go(() => { ui.view = "team"; ui.teamId = id; ui.confirmDelTeam = false; }); scrollTo(0, 0); break;
     case "team-del": go(() => (ui.confirmDelTeam = true)); break;
