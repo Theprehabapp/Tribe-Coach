@@ -10,7 +10,7 @@ import { openTimer, closeTimer, presetFor, restSecs } from "./timer.js";
 import {
   FEEDBACK_HOURS, DOW_LONG, W1_LINE, ymd, fmtDay, fmtLong, fmtTime,
   dueAt, timeLeft, weekOf, sessionDate, rxLine, bumpTarget, blockLabels, exKey, hasPct, pctLoad,
-  daysBetween, parseYmd, METRICS, rowsOf, applyRows, parseVal, shortRx, bumpPct, DAY_ORDER, dayNum, valText,
+  daysBetween, parseYmd, addDays, METRICS, rowsOf, applyRows, parseVal, shortRx, bumpPct, DAY_ORDER, dayNum, valText,
 } from "./schedule.js";
 
 const STREAMS = ["Tribe Build", "Hypertrophy X", "TribeFit", "Aerobic Conditioning", "HYROX"];
@@ -41,6 +41,19 @@ function planFor(c) {
   return { p: null, start: null, team: t || null };
 }
 const libraryPrograms = () => D.programs.filter((p) => !p.owner_id);
+// A program cut to start at week n (1-based): week n becomes week 1, starting this Monday.
+const thisMonday = () => { const t = new Date(); return ymd(addDays(t, -((t.getDay() + 6) % 7))); };
+const nowWeek = (plan) => Math.min(Math.max(weekOf(plan.start, new Date()) + 1, 1), plan.p?.weeks.length || 1);
+const weekPick = (id, p, sel) => `<select class="t mini" id="${id}" aria-label="Start from week">${p.weeks.map((w, i) => `<option value="${i + 1}"${i + 1 === sel ? " selected" : ""}>from week ${i + 1}${w.days.length ? "" : " (empty)"}</option>`).join("")}</select>`;
+async function copyFor(c, src, from) {
+  const base = { name: `${src.name} (${c.name || c.email})`, note: src.note, weeks: structuredClone(src.weeks.slice(from - 1)) };
+  const row = await api.createProgram({ ...base, owner_id: c.id });
+  D.programs.unshift(row);
+  const start = from > 1 ? thisMonday() : c.start_date || planFor(c).start;
+  const prof = await api.updateProfile(c.id, { program_id: row.id, ...(start ? { start_date: start } : {}) });
+  D.profiles = D.profiles.map((x) => (x.id === c.id ? prof : x));
+  return row;
+}
 // Exercise library entry and an athlete's 1RM for an exercise name, matched loosely.
 const libFor = (name) => D.exercises.find((x) => exKey(x.name) === exKey(name));
 const maxFor = (cid, name) => D.maxes.find((m) => m.client_id === cid && exKey(m.exercise) === exKey(name));
@@ -549,7 +562,7 @@ function programBox(c) {
     <div class="grid2"><label class="f">${team ? "Own program" : "Program"}<select class="t" id="c-prog" data-change="c-prog">${opts(c.program_id)}</select></label>
     <label class="f">Start date<input class="t" type="date" id="c-start" data-change="c-start" value="${esc(c.start_date || "")}"></label></div>
     <p class="muted small">${plan.team && !c.program_id ? `Following ${esc(plan.team.name)}${plan.p ? `: ${esc(plan.p.name)}` : ""}${plan.start ? ` from ${fmtDay(plan.start)}` : ""}. Pick an own program to override it.` : "Start on a Monday so week numbers line up with the calendar."}</p>
-    ${D.teamsReady ? `<div class="row">${plan.p ? `<button class="btn small" data-act="copy-for" data-id="${c.id}">Copy ${esc(plan.p.name)} just for ${esc(c.name || "them")}</button>` : ""}<button class="btn small ghost" data-act="new-for" data-id="${c.id}">Write a new program for ${esc(c.name || "them")}</button></div>
+    ${D.teamsReady ? `<div class="row">${plan.p && plan.p.owner_id !== c.id ? `${weekPick("copy-from", plan.p, nowWeek(plan))}<button class="btn small" data-act="copy-for" data-id="${c.id}">Copy ${esc(plan.p.name)} just for ${esc(c.name || "them")}</button>` : ""}<button class="btn small ghost" data-act="new-for" data-id="${c.id}">Write a new program for ${esc(c.name || "them")}</button></div>
     ${own.length ? `<div class="list">${own.map((p) => `<button class="item" data-act="open-program" data-id="${p.id}"><div class="row spread"><strong>${esc(p.name)}</strong><span class="small muted">Edit</span></div></button>`).join("")}</div>` : ""}` : ""}`;
 }
 function vTeam() {
@@ -563,6 +576,7 @@ function vTeam() {
     <label class="f">Start date<input class="t" type="date" id="t-start" data-change="t-start" value="${esc(t.start_date || "")}"></label></div>
     <p class="muted small">Everyone in the team trains this program from this date, unless they have their own program.</p>
     ${D.socialReady ? `<label class="row small"><input type="checkbox" data-change="t-board"${t.leaderboard !== false ? " checked" : ""}> Show the team leaderboard to its athletes</label>` : ""}</section>
+    ${teamCopies(t)}
     ${boardBox(t, true)}
     <section class="stack"><div class="section-head"><h2>Athletes</h2><span class="muted small num">${athletes.filter((c) => c.team_id === t.id).length}</span></div>
     ${athletes.length ? `<div class="list">${athletes.map((c) => { const other = c.team_id && c.team_id !== t.id ? teamOf(c) : null;
@@ -570,6 +584,14 @@ function vTeam() {
         <input type="checkbox" data-change="t-member" data-id="${c.id}"${c.team_id === t.id ? " checked" : ""} aria-label="${esc(c.name || c.email)} in ${esc(t.name)}"></label>`; }).join("")}</div>` : '<div class="empty">No approved athletes yet.</div>'}</section>
     ${D.invitesReady ? inviteBox(t) : ""}
     <div class="row">${ui.confirmDelTeam ? `<span>Delete ${esc(t.name)}? Athletes stay, they just leave the team.</span><button class="btn small primary" data-act="team-del-yes">Delete</button><button class="btn small" data-act="team-del-no">Keep it</button>` : '<button class="btn small danger" data-act="team-del">Delete team</button>'}</div>`;
+}
+
+// Give every athlete on the team their own copy of its program, optionally starting part way through.
+function teamCopies(t) {
+  const p = program(t.program_id), n = clients().filter((c) => c.approved && c.team_id === t.id && !c.program_id).length;
+  if (!p || !n) return "";
+  return `<section class="stack"><div class="row">${weekPick("team-from", p, nowWeek({ p, start: t.start_date }))}<button class="btn small" data-act="team-copies">Give ${n} athlete${n === 1 ? "" : "s"} their own copy</button></div>
+    <p class="muted small">Each gets ${esc(p.name)} as their own program to edit. Pick a later week to drop them in there; it becomes their week 1 from this Monday.</p></section>`;
 }
 
 // Add athletes by email, before or after they sign up. Waiting emails join this team, approved, when they make an account.
@@ -1365,17 +1387,34 @@ document.addEventListener("click", async (ev) => {
       try { await api.deleteTeam(ui.teamId); D.teams = D.teams.filter((t) => t.id !== ui.teamId); D.profiles.forEach((c) => { if (c.team_id === ui.teamId) c.team_id = null; }); go(() => { ui.view = null; ui.confirmDelTeam = false; }); }
       catch (err) { fail(err, "Delete"); }
       break;
-    case "copy-for":
+    case "copy-for": {
+      const c = profile(id), src = planFor(c).p, from = +(document.getElementById("copy-from")?.value || 1);
+      try {
+        const row = await copyFor(c, src, from);
+        toast(`Copied${from > 1 ? ` from week ${from}, starting this Monday` : ""}. Changes here only affect ${c.name || "them"}.`);
+        go(() => { ui.programId = row.id; ui.week = 0; ui.view = "program"; }); scrollTo(0, 0);
+      } catch (err) { fail(err, "Program"); }
+      break;
+    }
+    case "team-copies": {
+      const t = D.teams.find((x) => x.id === ui.teamId), src = program(t?.program_id), from = +(document.getElementById("team-from")?.value || 1);
+      const todo = clients().filter((c) => c.approved && c.team_id === t.id && !c.program_id);
+      if (!src || !todo.length) break;
+      if (!confirm(`Give ${todo.length} athlete${todo.length === 1 ? "" : "s"} their own copy of ${src.name}${from > 1 ? ` from week ${from}, starting this Monday` : ""}? Later edits to the team program won't reach them.`)) break;
+      b.disabled = true; let done = 0;
+      try { for (const c of todo) { await copyFor(c, src, from); done++; b.textContent = `Copying ${done} of ${todo.length}...`; } toast(`${done} athlete${done === 1 ? " now has their" : "s now have their"} own program.`); }
+      catch (err) { fail(err, "Program"); toast(`${done} of ${todo.length} copied before the error. Press again to finish the rest.`); }
+      render(); break;
+    }
     case "new-for": {
-      const c = profile(id), src = act === "copy-for" ? planFor(c).p : null, plan = planFor(c);
-      const base = src ? { name: `${src.name} (${c.name || c.email})`, note: src.note, weeks: structuredClone(src.weeks) }
-        : { name: `Program for ${c.name || c.email}`, note: "", weeks: [{ days: [{ id: newId(), name: "Tribe Build", dow: 1, coachNote: "", exercises: [] }] }] };
+      const c = profile(id), plan = planFor(c);
+      const base = { name: `Program for ${c.name || c.email}`, note: "", weeks: [{ days: [{ id: newId(), name: "Tribe Build", dow: 1, coachNote: "", exercises: [] }] }] };
       try {
         const row = await api.createProgram({ ...base, owner_id: c.id });
         D.programs.unshift(row);
         const patch = { program_id: row.id, ...(!c.start_date && plan.start ? { start_date: plan.start } : {}) };
         const prof = await api.updateProfile(c.id, patch); D.profiles = D.profiles.map((x) => (x.id === c.id ? prof : x));
-        toast(src ? `Copied. Changes here only affect ${c.name || "them"}.` : `New program for ${c.name || "them"}. Add sessions below.`);
+        toast(`New program for ${c.name || "them"}. Add sessions below.`);
         go(() => { ui.programId = row.id; ui.week = 0; ui.view = "program"; }); scrollTo(0, 0);
       } catch (err) { fail(err, "Program"); }
       break;
