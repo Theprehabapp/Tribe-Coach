@@ -10,7 +10,7 @@
 // own, then both played together.
 
 const COLORS = [["#E4572E", "Red"], ["#FFFFFF", "White"], ["#3FB8F0", "Blue"]];
-const TOOLS = [["pen", "Pen"], ["line", "Line"], ["circle", "Circle"], ["angle", "Angle"]];
+const TOOLS = [["pen", "Pen"], ["line", "Line"], ["circle", "Circle"], ["angle", "Angle"], ["text", "Text"]];
 const SPEEDS = [1, 0.5, 0.25];
 const FPS = 30;
 const MAX_SIDE = 1280; // recording resolution cap, keeps files small enough to upload
@@ -45,6 +45,7 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
       <div class="seg" role="group" aria-label="Speed">${SPEEDS.map((s) => `<button data-bd="speed" data-v="${s}" aria-pressed="${s === 1}">${s === 1 ? "1x" : s === 0.5 ? "½x" : "¼x"}</button>`).join("")}</div>
       <div class="seg" role="group" aria-label="Drawing tool">${TOOLS.map(([k, l]) => `<button data-bd="tool" data-v="${k}" aria-pressed="${k === "line"}">${l}</button>`).join("")}</div>
     </div>
+    <div class="bd-bar" data-bd-textrow hidden><input class="t" data-bd-text maxlength="60" placeholder="Type the text, then tap the video where it goes" aria-label="Text to add"></div>
     <div class="bd-bar">
       <div class="bd-colors" role="group" aria-label="Colour">${COLORS.map(([c, l], i) => `<button data-bd="color" data-v="${c}" aria-label="${l}" aria-pressed="${i === 0}" style="--c:${c}"></button>`).join("")}</div>
       <button class="btn small ghost" data-bd="undo">Undo</button>
@@ -119,6 +120,12 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
     } else if (s.type === "circle") {
       const [ax, ay] = px(s.a), [bx, by] = px(s.b);
       ctx.arc(ax, ay, Math.hypot(bx - ax, by - ay), 0, Math.PI * 2); ctx.stroke();
+    } else if (s.type === "text") {
+      const [x, y] = px(s.a), fs = Math.max(18, W() / 20), pad = fs * 0.35;
+      ctx.shadowBlur = 0; ctx.font = `700 ${fs}px Barlow, Arial, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      const tw = ctx.measureText(s.text).width;
+      ctx.fillStyle = "rgba(0,0,0,.65)"; ctx.fillRect(x - tw / 2 - pad, y - fs / 2 - pad, tw + pad * 2, fs + pad * 2);
+      ctx.fillStyle = s.color; ctx.fillText(s.text, x, y);
     } else if (s.type === "angle") {
       const [ax, ay] = px(s.a), [bx, by] = px(s.b);
       ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
@@ -182,19 +189,24 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
     const p = pos(ev), last = st.shapes[st.shapes.length - 1];
     if (st.moving && overlaid()) { st.drag = { p, dx: st.ov.dx, dy: st.ov.dy }; return; }
     if (st.tool === "angle" && last?.type === "angle" && !last.c) { st.shapes.pop(); st.drawing = { ...last, c: p }; return; }
+    if (st.tool === "text") {
+      const text = $("[data-bd-text]").value.trim();
+      if (!text) { $("[data-bd-text]").focus(); $("[data-bd-hint]").textContent = "Type the text first, then tap the video."; return; }
+      st.drawing = { type: "text", color: st.color, a: p, text }; return;
+    }
     st.drawing = st.tool === "pen" ? { type: "pen", color: st.color, pts: [p] } : { type: st.tool, color: st.color, a: p, b: p };
   });
   canvas.addEventListener("pointermove", (ev) => {
     if (st.drag) { const p = pos(ev); st.ov.dx = st.drag.dx + p[0] - st.drag.p[0]; st.ov.dy = st.drag.dy + p[1] - st.drag.p[1]; layout(); return; }
     if (!st.drawing) return;
     const p = pos(ev), d = st.drawing;
-    if (d.type === "pen") d.pts.push(p); else if (d.type === "angle" && d.c) d.c = p; else d.b = p;
+    if (d.type === "text") d.a = p; else if (d.type === "pen") d.pts.push(p); else if (d.type === "angle" && d.c) d.c = p; else d.b = p;
   });
   const endDraw = () => {
     st.drag = null;
     const d = st.drawing; if (!d) return;
     st.drawing = null;
-    const tiny = d.type !== "pen" && !d.c && Math.hypot((d.b[0] - d.a[0]) * W(), (d.b[1] - d.a[1]) * H()) < 6;
+    const tiny = d.type !== "pen" && d.type !== "text" && !d.c && Math.hypot((d.b[0] - d.a[0]) * W(), (d.b[1] - d.a[1]) * H()) < 6;
     if (!tiny) st.shapes.push(d);
     hint();
   };
@@ -233,6 +245,7 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
     const last = st.shapes[st.shapes.length - 1];
     $("[data-bd-hint]").textContent = st.moving && overlaid() ? "Drag the overlay to line it up. Tap Move overlay again to draw."
       : st.tool === "angle" ? (last?.type === "angle" && !last.c ? "Now drag from the joint to draw the second line." : "Angle: drag along the first limb, ending at the joint.")
+      : st.tool === "text" ? "Text: type it above, then tap the video where it goes. Drag while holding to place it."
       : st.tool === "circle" ? "Circle: drag out from the centre." : st.tool === "pen" ? "Pen: draw freehand." : "Line: drag from start to end.";
   }
 
@@ -314,7 +327,7 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
       }
       case "move": st.moving = !st.moving; setMoving(); hint(); break;
       case "ov-reset": Object.assign(st.ov, { scale: 1, dx: 0, dy: 0 }); $("[data-bd-size]").value = 100; layout(); break;
-      case "tool": st.tool = v; press("tool"); { const last = st.shapes[st.shapes.length - 1]; if (last?.type === "angle" && !last.c) st.shapes.pop(); } hint(); break;
+      case "tool": st.tool = v; press("tool"); $("[data-bd-textrow]").hidden = v !== "text"; if (v === "text") $("[data-bd-text]").focus(); { const last = st.shapes[st.shapes.length - 1]; if (last?.type === "angle" && !last.c) st.shapes.pop(); } hint(); break;
       case "color": st.color = v; press("color"); break;
       case "undo": st.shapes.pop(); hint(); break;
       case "clear": st.shapes = []; hint(); break;
@@ -353,6 +366,8 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
     // Put a second clip beside the main one, or pass null to remove it. Not while recording: the
     // canvas changes size, which a recording in progress can't follow. Drawings are cleared because
     // they were placed for the old layout.
+    // Rename a clip's tag (the date shown in its corner when comparing). 0 is this video, 1 the compare clip.
+    setLabel(i, name) { if (vids[i]) vids[i].label = name; },
     setCompare(url, name = "") {
       if (st.rec) return false;
       if (vids[1]) { unload(vids[1]); vids.pop(); }

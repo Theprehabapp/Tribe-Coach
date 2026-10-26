@@ -341,7 +341,7 @@ function vReview() {
     <section class="hero"><div class="kicker">${esc(c?.name || "Client")}, library</div><h1>${esc(v.exercise)}</h1>
     <div class="row">${v.status === "waiting" ? '<span class="chip">Waiting for review</span>' : verdictChip(v.verdict)}<span class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</span></div>
     ${v.feedback ? `<p class="small">Your feedback: ${esc(v.feedback)}</p>` : ""}</section>
-    <div class="row"><button class="btn small" data-act="cmp-toggle" id="cmp-btn">Compare</button><span class="small muted" id="cmp-state">Put an earlier rep or one of your reference reps beside or over this one.</span></div>
+    <div class="row"><button class="btn small" data-act="cmp-toggle" id="cmp-btn">Compare</button><div class="small muted" id="cmp-state">Put an earlier rep or one of your reference reps beside or over this one.</div></div>
     <div id="cmp-pick" class="card stack" hidden></div>
     <div id="bd-root" class="bd"><div class="empty">Loading video</div></div>
     <p class="small muted">${D.chatReady ? `Record and save a breakdown and it's sent to ${esc(c?.name || "them")} in your chat.` : "Saving a breakdown here replaces the one on this video."}</p>`;
@@ -349,7 +349,7 @@ function vReview() {
     <section class="hero"><div class="kicker">${esc(c?.name || "Client")}${p ? `, ${esc(p.name)}${w >= 0 ? ` week ${w + 1}` : ""}` : ""}</div><h1>${esc(v.exercise)}</h1>
     <div class="row"><span class="chip${left.overdue ? " red" : ""}">${left.label}</span><span class="small muted">Uploaded ${fmtTime(v.uploaded_at)}</span></div>
     ${v.note ? `<p>"${esc(v.note)}"</p>` : '<p class="small muted">No note from the client.</p>'}</section>
-    <div class="row"><button class="btn small" data-act="cmp-toggle" id="cmp-btn">Compare</button><span class="small muted" id="cmp-state">Put an earlier rep or one of your reference reps beside or over this one.</span></div>
+    <div class="row"><button class="btn small" data-act="cmp-toggle" id="cmp-btn">Compare</button><div class="small muted" id="cmp-state">Put an earlier rep or one of your reference reps beside or over this one.</div></div>
     <div id="cmp-pick" class="card stack" hidden></div>
     <div id="bd-root" class="bd"><div class="empty">Loading video</div></div>
     <p class="small muted">To send a breakdown: tap Record, then play, slow down, pause and draw while you talk. Everything on screen and your voice go into one video for ${esc(c?.name || "your client")}.${D.clipsReady ? " Cover one point per recording and label it; they all go out together when you send." : ""}</p>
@@ -384,7 +384,7 @@ async function openBreakdown() {
     const toChat = ui.lib && D.chatReady, multi = toChat || D.clipsReady;
     const cur = () => D.videos.find((x) => x.id === v.id) || v;
     bd = mountBreakdown(root, {
-      src, label: fmtDay(new Date(v.uploaded_at)),
+      src, label: fmtFilmed(filmedOf(v)),
       maxBytes: api.MAX_VIDEO_MB * 1048576,
       multi, nextLabel: () => (toChat ? v.exercise : `Point ${clipsOf(cur()).length + 1}`),
       onSave: async (blob, label) => {
@@ -406,6 +406,10 @@ async function openBreakdown() {
 }
 
 /* compare picker */
+// When a video was filmed: the date the coach set (migration 0015), else the day it was uploaded.
+const fmtFilmed = (d) => fmtDay(d) + (d.getFullYear() !== new Date().getFullYear() ? ` ${d.getFullYear()}` : "");
+const filmedOf = (v) => (v.filmed_on ? parseYmd(v.filmed_on) : new Date(v.uploaded_at));
+const filmedReady = () => D.videos.some((x) => "filmed_on" in x);
 async function paintCompare() {
   const box = document.getElementById("cmp-pick"), v = D.videos.find((x) => x.id === ui.bdId);
   if (!box || !v) return;
@@ -413,11 +417,11 @@ async function paintCompare() {
   if (!ui.cmpOpen) return;
   const same = (x) => x.exercise.trim().toLowerCase() === v.exercise.trim().toLowerCase();
   const theirs = D.videos.filter((x) => x.client_id === v.client_id && x.id !== v.id && x.storage_path)
-    .sort((a, b) => same(b) - same(a) || b.uploaded_at.localeCompare(a.uploaded_at)); // same exercise first, newest first
-  const pick = (path, label, title) => `<button class="item" data-act="cmp-pick" data-path="${esc(path)}" data-label="${esc(label)}">${title}</button>`;
+    .sort((a, b) => same(b) - same(a) || filmedOf(b) - filmedOf(a)); // same exercise first, newest first
+  const pick = (path, label, title, vid = "") => `<button class="item" data-act="cmp-pick" data-path="${esc(path)}" data-label="${esc(label)}" data-vid="${esc(vid)}">${title}</button>`;
   box.innerHTML = `<div class="section-head"><h3>Compare with</h3><button class="link" data-act="cmp-toggle">Close</button></div>
     <p class="kicker">${esc(profile(v.client_id)?.name || "Client")}'s other videos</p>
-    ${theirs.length ? `<div class="list">${theirs.map((x) => pick(x.storage_path, fmtDay(new Date(x.uploaded_at)), `<div class="row spread"><strong>${esc(x.exercise)}</strong><span class="row">${verdictChip(x.verdict)}<span class="small muted">${fmtDay(new Date(x.uploaded_at))}</span></span></div>`)).join("")}</div>` : '<p class="small muted">No other videos from them yet.</p>'}
+    ${theirs.length ? `<div class="list">${theirs.map((x) => pick(x.storage_path, fmtFilmed(filmedOf(x)), `<div class="row spread"><strong>${esc(x.exercise)}</strong><span class="row">${verdictChip(x.verdict)}<span class="small muted">${fmtFilmed(filmedOf(x))}</span></span></div>`, x.id)).join("")}</div>` : '<p class="small muted">No other videos from them yet.</p>'}
     <p class="kicker">Your reference reps</p>
     ${ui.refs == null ? '<p class="small muted">Loading...</p>' : ui.refs.length ? `<div class="list">${ui.refs.map((r) =>
       `<div class="row ref-row">${pick(r.path, r.label, `<strong>${esc(r.label)}</strong>`)}<button class="btn small ghost" data-act="ref-del" data-path="${esc(r.path)}" aria-label="Delete ${esc(r.label)}">Delete</button></div>`).join("")}</div>` : '<p class="small muted">None yet. Add a clip of a good rep and use it with any athlete.</p>'}
@@ -434,7 +438,13 @@ function cmpState(text, on) {
   if (s) s.innerHTML = text;
   if (b) { b.textContent = on ? "Change compare" : "Compare"; }
 }
-async function pickCompare(path, label) {
+// A date box under each clip when comparing. Changing one renames the tag on that clip and, for an athlete's video, saves when it was filmed.
+function cmpDates(v, cmp) {
+  const box = (i, title, vid, ref, val) => `<label class="f small">${title}<input class="t" type="date" data-change="cmp-date" data-i="${i}" data-vid="${esc(vid)}" data-ref="${esc(ref)}" value="${esc(val)}"></label>`;
+  const c = cmp.vid ? D.videos.find((x) => x.id === cmp.vid) : null;
+  return `<div class="grid2 cmp-dates">${box(0, "This video filmed", v.id, "", ymd(filmedOf(v)))}${box(1, c ? "Compare video filmed" : `${esc(cmp.label)} filmed`, cmp.vid || "", c ? "" : cmp.label, c ? ymd(filmedOf(c)) : "")}</div>`;
+}
+async function pickCompare(path, label, vid = "") {
   if (!bd) return;
   if (bd.recording) return toast("Stop recording before changing the compare video.");
   ui.cmpOpen = false; paintCompare();
@@ -442,7 +452,8 @@ async function pickCompare(path, label) {
   try {
     const url = await api.videoBlobUrl(path);
     if (!bd || !bd.setCompare(url, label)) { URL.revokeObjectURL(url); cmpState(""); return; }
-    cmpState(`Comparing with <strong>${esc(label)}</strong>. Line the reps up one at a time, then play Both. Tap Overlay to lay it over this video instead. <button class="link" data-act="cmp-clear">Remove</button>`, true);
+    const v = D.videos.find((x) => x.id === ui.bdId);
+    cmpState(`Comparing with <strong>${esc(label)}</strong>. Line the reps up one at a time, then play Both. Tap Overlay to lay it over this video instead. <button class="link" data-act="cmp-clear">Remove</button>${v ? cmpDates(v, { vid, label }) : ""}`, true);
   } catch (e) { cmpState(`Couldn't load that video: ${esc(e.message || e)}`); }
 }
 async function addRef(file) {
@@ -1344,7 +1355,7 @@ document.addEventListener("click", async (ev) => {
       break;
     }
     case "cmp-toggle": ui.cmpOpen = !ui.cmpOpen; paintCompare(); break;
-    case "cmp-pick": pickCompare(b.dataset.path, b.dataset.label); break;
+    case "cmp-pick": pickCompare(b.dataset.path, b.dataset.label, b.dataset.vid); break;
     case "cmp-clear": if (bd?.setCompare(null)) cmpState("Put an earlier rep or one of your reference reps beside or over this one."); else toast("Stop recording first."); break;
     case "save-vid": saveVideo(b); break;
     case "clip-play": {
@@ -1711,6 +1722,15 @@ document.addEventListener("change", async (ev) => {
     if (k === "name" && !val) return toast("Give the team a name.");
     try { const row = await api.saveTeam(ui.teamId, { [k]: val }); D.teams = D.teams.map((x) => (x.id === row.id ? row : x)); render(); toast("Team saved."); }
     catch (err) { fail(err, "Team"); }
+  }
+  if (a === "cmp-date") {
+    const val = t.value, ref = t.dataset.ref, vid = t.dataset.vid, x = D.videos.find((y) => y.id === vid);
+    const day = val ? fmtFilmed(parseYmd(val)) : x ? fmtFilmed(new Date(x.uploaded_at)) : "";
+    bd?.setLabel(+t.dataset.i, ref ? [ref, day].filter(Boolean).join(", ") : day || "This video");
+    if (vid && filmedReady()) {
+      try { const row = await api.setLibrary(vid, { filmed_on: val || null }); D.videos = D.videos.map((x) => (x.id === row.id ? row : x)); toast(val ? `Saved as filmed ${day}.` : "Back to the upload date."); }
+      catch (err) { fail(err, "Date"); }
+    }
   }
   if (a === "c-start") await patchProfile(ui.clientId, { start_date: t.value || null }, "Start date saved.");
 });
