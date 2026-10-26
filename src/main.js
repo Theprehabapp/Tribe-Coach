@@ -228,7 +228,7 @@ function jumpTo(input) {
   const [, kind, id] = hit;
   input.value = ""; input.blur();
   go(() => {
-    ui.view = kind; ui.sess = null; ui.confirmDelProgram = false; ui.confirmDelTeam = false;
+    ui.view = kind; ui.sess = null; ui.calBack = null; ui.confirmDelProgram = false; ui.confirmDelTeam = false;
     if (kind === "client") { ui.clientId = id; ui.clientTab = "profile"; ui.chatRef = null; }
     else if (kind === "team") ui.teamId = id;
     else { ui.programId = id; ui.week = 0; }
@@ -553,7 +553,7 @@ function vSession() {
     <div class="stack"><h2>Day ${s.w * 7 + dayNum(dow)}</h2>${sameDay.map((d) => sessCard(s.w, d, d === day)).join("")}
     <button class="btn small" data-act="sess-add" data-w="${s.w}" data-dow="${dow}">Add ${sameDay.length ? "another" : "a"} session</button>
     ${cb?.kind === "session" ? `<button class="btn small primary" data-act="paste-sess" data-w="${s.w}" data-dow="${dow}">Paste ${esc(cb.label)} here</button>` : ""}</div></aside><div class="sess-main stack">${clipBar()}
-    <div class="row spread"><button class="link" data-act="back">Back to program</button><span class="small muted" id="save-state"></span></div>
+    <div class="row spread"><button class="link" data-act="back">${ui.calBack ? "Back to calendar" : "Back to program"}</button><span class="small muted" id="save-state"></span></div>
     <h1>Week ${s.w + 1} Day ${dayNum(dow)}</h1>`;
   if (!day) return out + `<div class="empty">No session on this day.</div></div></div>`;
   out += `<section class="stack"><div class="grid2"><label class="f">Session<input class="t" list="streams" id="d-name-${day.id}" data-input="d-name" data-d="${di}" value="${esc(day.name)}"></label>
@@ -608,6 +608,61 @@ function programBox(c) {
     ${D.teamsReady ? `<div class="row">${plan.p && plan.p.owner_id !== c.id ? `${weekPick("copy-from", plan.p, nowWeek(plan))}<button class="btn small" data-act="copy-for" data-id="${c.id}">Copy ${esc(plan.p.name)} just for ${esc(c.name || "them")}</button>` : ""}<button class="btn small ghost" data-act="new-for" data-id="${c.id}">Write a new program for ${esc(c.name || "them")}</button></div>
     ${own.length ? `<div class="list">${own.map((p) => `<button class="item" data-act="open-program" data-id="${p.id}"><div class="row spread"><strong>${esc(p.name)}</strong><span class="small muted">Edit</span></div></button>`).join("")}</div>` : ""}` : ""}`;
 }
+/* ----- calendars: a team's or an athlete's sessions on real dates, a month at a time, like TrainHeroic ----- */
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+// The sessions a plan puts on one date: the program week the date falls in, that week's days on its weekday.
+function sessionsOn(plan, d) {
+  const w = weekOf(plan.start, d), wk = plan.p?.weeks[w];
+  return wk ? wk.days.filter((x) => x.dow === d.getDay()).map((day) => ({ w, day })) : [];
+}
+// who: the athletes whose logs count. An athlete's calendar shows done or missed; a team's (one) shows how many finished.
+// scope: the team or athlete id, so a picked session only opens on the calendar it was picked on.
+function calBox(plan, who, scope, note, team) {
+  if (!plan.p || !plan.start) return `<section class="stack"><div class="section-head"><h2>Calendar</h2></div><div class="empty">Pick a program and a start date to see the calendar.</div></section>`;
+  const first = parseYmd(ui.calMonth || today().slice(0, 8) + "01"), t = today();
+  const last = new Date(first.getFullYear(), first.getMonth() + 1, 0);
+  const from = addDays(first, -((first.getDay() + 6) % 7)), to = addDays(last, (7 - last.getDay()) % 7);
+  // Who finished what, worked out once: a team of 150 over a month would otherwise rescan every log per card.
+  const doneSet = new Set(D.logs.filter((l) => l.done && l.program_id === plan.p.id).map((l) => `${l.client_id}|${l.week}|${l.day_id}`));
+  let cells = "";
+  for (let d = from; d <= to; d = addDays(d, 1)) {
+    const key = ymd(d);
+    cells += `<div class="mc-cell${d.getMonth() !== first.getMonth() ? " out" : ""}${key === t ? " today" : ""}"><span class="mc-date num">${d.getDate()}</span>${sessionsOn(plan, d).map(({ w, day }) => calCard(plan, w, day, who, key, scope, team, doneSet)).join("")}</div>`;
+  }
+  return `<section class="mc"><div class="row spread"><div class="row"><button class="btn small" data-act="cal-month" data-v="-1" aria-label="Previous month">&larr;</button><button class="btn small" data-act="cal-month" data-v="1" aria-label="Next month">&rarr;</button><h2>${MONTHS[first.getMonth()]} ${first.getFullYear()}</h2></div>
+    <span class="row"><span class="small muted">${esc(plan.p.name)} from ${fmtDay(plan.start)}</span><button class="btn small ghost" data-act="cal-month" data-v="0">Today</button></span></div>
+    <div class="mc-scroll"><div class="mc-grid">${DAY_ORDER.map((n) => `<div class="mc-dow">${DOW_LONG[n].slice(0, 3)}</div>`).join("")}${cells}</div></div>${calPanel(plan, who, scope, note, team)}</section>`;
+}
+function calCard(plan, w, day, who, key, scope, team, doneSet) {
+  const done = who.filter((cid) => doneSet.has(`${cid}|${w}|${day.id}`)).length, k = ui.calPick;
+  const status = !team ? (done ? '<span class="mc-ok">&#10003; Done</span>' : key < today() ? '<span class="mc-miss">Missed</span>' : "")
+    : who.length ? `<span class="mc-n num${done ? " some" : ""}">${done}/${who.length} done</span>` : "";
+  const labels = blockLabels(day.exercises), on = k && k.scope === scope && k.w === w && k.id === day.id;
+  return `<button class="mc-card${on ? " on" : ""}" data-act="cal-pick" data-scope="${scope}" data-pid="${plan.p.id}" data-w="${w}" data-id="${day.id}" data-date="${key}"><span class="mc-name">${esc(day.name || "Session")}</span>${status}
+    ${day.exercises.map((e, i) => `<span class="mc-x"><span class="mc-lb">${labels[i] || ""}</span><span>${esc(e.name || "Exercise")}</span></span>`).join("")}</button>`;
+}
+// A picked session: what was prescribed next to what was logged (one athlete) or who has finished (a team).
+function calPanel(plan, who, scope, note, team) {
+  const k = ui.calPick;
+  if (!k || k.scope !== scope || k.pid !== plan.p.id) return "";
+  const day = plan.p.weeks[k.w]?.days.find((x) => x.id === k.id);
+  if (!day) return "";
+  const labels = blockLabels(day.exercises);
+  const rx = day.exercises.map((e, i) => `<div class="small"><strong>${labels[i] ? labels[i] + " " : ""}${esc(e.name || "Exercise")}</strong> <span class="muted num">${esc(rxLine(e))}</span></div>`).join("") || '<p class="small muted">No exercises yet.</p>';
+  let right;
+  if (!team) { const l = findLog(who[0], plan.p.id, k.w, day.id); right = l ? logSummary(l) : '<div class="empty">Not logged yet.</div>'; }
+  else {
+    const done = who.filter((cid) => findLog(cid, plan.p.id, k.w, day.id)?.done), name = (cid) => esc(profile(cid)?.name || profile(cid)?.email || "Athlete");
+    right = who.length ? `<p class="small"><strong>Done (${done.length}):</strong> ${done.map(name).join(", ") || "nobody yet"}</p>
+      <p class="small muted"><strong>Not yet (${who.length - done.length}):</strong> ${who.filter((cid) => !done.includes(cid)).map(name).join(", ") || "nobody"}</p>` : '<p class="small muted">No athletes follow this team program.</p>';
+  }
+  return `<div class="card mc-panel"><div class="row spread"><h3>${esc(day.name || "Session")} <span class="small muted">Week ${k.w + 1}, ${fmtLong(k.date)}</span></h3>
+    <span class="row"><button class="btn small" data-act="cal-edit">Edit session</button><button class="link small" data-act="cal-close">Close</button></span></div>
+    ${note ? `<p class="small muted">${note}</p>` : ""}
+    <div class="grid2 mc-split"><div class="stack"><div class="kicker">Prescribed</div>${day.coachNote ? `<p class="small ins">${esc(day.coachNote)}</p>` : ""}${rx}</div>
+    <div class="stack"><div class="kicker">${team ? "Athletes" : "Logged"}</div>${right}</div></div></div>`;
+}
+const teamFollowers = (t) => clients().filter((c) => c.approved && c.team_id === t.id && !c.program_id).map((c) => c.id);
 function vTeam() {
   const t = D.teams.find((x) => x.id === ui.teamId);
   if (!t) { ui.view = null; return vClients(); }
@@ -619,6 +674,7 @@ function vTeam() {
     <label class="f">Start date<input class="t" type="date" id="t-start" data-change="t-start" value="${esc(t.start_date || "")}"></label></div>
     <p class="muted small">Everyone in the team trains this program from this date, unless they have their own program.</p>
     ${D.socialReady ? `<label class="row small"><input type="checkbox" data-change="t-board"${t.leaderboard !== false ? " checked" : ""}> Show the team leaderboard to its athletes</label>` : ""}</section>
+    ${calBox({ p: program(t.program_id), start: t.start_date }, teamFollowers(t), t.id, "", true)}
     ${teamCopies(t)}
     ${boardBox(t, true)}
     <section class="stack"><div class="section-head"><h2>Athletes</h2><span class="muted small num">${athletes.filter((c) => c.team_id === t.id).length}</span></div>
@@ -738,6 +794,11 @@ const TAB_ICON = {
   chat: svg('<path d="M4 5h16v11H9l-5 4z"/>'),
   history: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
 };
+// An athlete's calendar. On the team's program, editing a session changes it for the whole team.
+function calOf(c) {
+  const plan = planFor(c);
+  return calBox(plan, [c.id], c.id, plan.team && !c.program_id ? `This is ${esc(plan.team.name)}'s program: editing a session changes it for everyone in the team.` : "");
+}
 function vClientDetail() {
   const c = profile(ui.clientId);
   if (!c) { ui.view = null; return vClients(); }
@@ -750,7 +811,7 @@ function vClientDetail() {
   if (tab === "library") return out + vLibrary(c);
   out += `<section class="stack">
     <label class="f">Goal<input class="t" id="c-goal" data-input="c-goal" value="${esc(c.goal)}"></label>
-    ${programBox(c)}</section>${checkinHistory(c.id)}${prBoard(c.id)}${progressBox(c.id)}`;
+    ${programBox(c)}</section>${calOf(c)}${checkinHistory(c.id)}${prBoard(c.id)}${progressBox(c.id)}`;
   const logs = D.logs.filter((l) => l.client_id === c.id);
   out += `<section class="stack"><div class="section-head"><h2>Logged sessions</h2><span class="muted small num">${logs.length}</span></div>${logs.length ? logs.map(logSummary).join("") : '<div class="empty">Nothing logged yet.</div>'}</section>`;
   out += `<div class="row">${ui.confirmRevoke === c.id
@@ -1329,7 +1390,8 @@ document.addEventListener("click", async (ev) => {
     case "tab":
     case "back":
       if (bd?.unsaved && !confirm("Leave without saving this breakdown?")) return;
-      if (act === "tab") { go(() => { ui.tab = v; ui.view = null; }); scrollTo(0, 0); break; }
+      if (act === "tab") { go(() => { ui.tab = v; ui.view = null; ui.calBack = null; }); scrollTo(0, 0); break; }
+      if (ui.view === "session" && ui.calBack) { const r = ui.calBack; go(() => { Object.assign(ui, r); ui.sess = null; ui.calBack = null; }); scrollTo(0, 0); break; }
       if (ui.view === "session") { go(() => { ui.view = "program"; ui.sess = null; }); break; }
       if (ui.view === "program" && program(ui.programId)?.owner_id) { const cid = program(ui.programId).owner_id; go(() => { ui.view = "client"; ui.clientId = cid; ui.clientTab = "profile"; ui.confirmDelProgram = false; }); scrollTo(0, 0); break; }
       go(() => { ui.view = null; ui.confirmRevoke = null; ui.confirmDelProgram = false; ui.confirmDelTeam = false; }); break;
@@ -1588,6 +1650,22 @@ document.addEventListener("click", async (ev) => {
         saveProgramSoon();
       }
       break;
+    }
+    case "cal-month": {
+      const f = parseYmd(ui.calMonth || today().slice(0, 8) + "01");
+      go(() => { ui.calMonth = +v ? ymd(new Date(f.getFullYear(), f.getMonth() + +v, 1)) : null; }); break;
+    }
+    case "cal-pick": {
+      const k = { scope: b.dataset.scope, pid: b.dataset.pid, w: +b.dataset.w, id, date: b.dataset.date }, same = ui.calPick?.scope === k.scope && ui.calPick?.w === k.w && ui.calPick?.id === k.id;
+      go(() => (ui.calPick = same ? null : k));
+      if (!same) document.querySelector(".mc-panel")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      break;
+    }
+    case "cal-close": go(() => (ui.calPick = null)); break;
+    case "cal-edit": {
+      const k = ui.calPick; if (!k) return;
+      const back = { view: ui.view, teamId: ui.teamId, clientId: ui.clientId, clientTab: "profile", calPick: k };
+      go(() => { ui.programId = k.pid; ui.week = k.w; ui.sess = { w: k.w, id: k.id }; ui.view = "session"; ui.calPick = null; ui.calBack = back; }); scrollTo(0, 0); break;
     }
     case "open-sess": go(() => { ui.week = +b.dataset.w; ui.sess = { w: +b.dataset.w, id }; ui.view = "session"; }); scrollTo(0, 0); break;
     case "sess-day": {
