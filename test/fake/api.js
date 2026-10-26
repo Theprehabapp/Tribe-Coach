@@ -20,6 +20,7 @@ if (new URLSearchParams(location.search).get("seed")) {
   db.messages.push({ id: "m-seed", client_id: "a", sender_id: "a", body: "Should I go lighter next week?", video_id: "v-old", clip_path: null, created_at: "2025-12-03T09:00:00Z", read_at: null });
   db.videos.push({ id: "v-seed", client_id: "a", exercise: "Back Squat", note: "Set 3, does my back round?", slot: "2026-01-01", status: "waiting", verdict: "", feedback: "", uploaded_at: "2026-01-01T09:00:00Z", storage_path: "a/x.webm", review_path: null, clips: [] });
 }
+db.videos.forEach((v) => { v.filmed_on ??= null; });
 // ?team=1: Amy follows the seeded program through a team instead of having it assigned directly.
 if (new URLSearchParams(location.search).get("team") && db.programs.length) { db.teams.push({ id: "t-seed", name: "Morning Crew", program_id: "p-seed", start_date: "2026-09-28" }); amy.program_id = null; amy.start_date = null; amy.team_id = "t-seed"; }
 // ?rows=1: this week's Back Squat is prescribed set by set off a %.
