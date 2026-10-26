@@ -144,6 +144,8 @@ async function start(session) {
 
 function renderShell(html) {
   tabsEl.innerHTML = "";
+  document.body.classList.remove("coach");
+  const jump = document.querySelector(".jump"); if (jump) jump.hidden = true;
   document.querySelector(".top-timer").hidden = true;
   document.querySelector(".tabs").hidden = true;
   app.innerHTML = html + lockup();
@@ -191,13 +193,47 @@ function vPending(noProfile) {
 }
 
 /* ---------- main render ---------- */
+// The rail keeps its section lit inside it too: a program or session is under Programs, an athlete or team under Clients.
+const section = () => !isCoach() || !ui.view ? (ui.view ? null : ui.tab)
+  : ({ program: "programs", session: "programs", exlib: "programs", client: "clients", team: "clients", review: ui.lib ? "clients" : "queue" })[ui.view] || null;
 function renderTabs() {
   const tabs = isCoach()
     ? [["queue", "Review", waiting().length], ["programs", "Programs"], ["clients", "Clients", clients().filter((c) => !c.approved).length + clients().reduce((n, c) => n + unread(c.id), 0)]]
     : [["today", "Training"], ["videos", "Videos"], ["chat", "Coach", unread(me.id)], ["history", "Log"]];
   document.querySelector(".tabs").hidden = false;
+  document.body.classList.toggle("coach", isCoach());
+  renderJump();
   tabsEl.innerHTML = tabs.map(([k, label, n]) =>
-    `<button data-act="tab" data-v="${k}"${ui.tab === k && !ui.view ? ' aria-current="page"' : ""}><span class="tab-ico">${TAB_ICON[k]}${n ? `<span class="badge num">${n}</span>` : ""}</span>${label}</button>`).join("");
+    `<button data-act="tab" data-v="${k}"${section() === k ? ' aria-current="page"' : ""}><span class="tab-ico">${TAB_ICON[k]}${n ? `<span class="badge num">${n}</span>` : ""}</span>${label}</button>`).join("");
+}
+// Coach top bar: type any athlete, team or program and go straight there, like TrainHeroic's switcher.
+function jumpTargets() {
+  return [...clients().filter((c) => c.approved).map((c) => [`${c.name || c.email} (athlete)`, "client", c.id]),
+    ...D.teams.map((t) => [`${t.name} (team)`, "team", t.id]),
+    ...libraryPrograms().map((p) => [`${p.name} (program)`, "program", p.id])];
+}
+function renderJump() {
+  let box = document.querySelector(".jump");
+  if (!isCoach()) { if (box) box.hidden = true; return; }
+  if (!box) {
+    document.querySelector(".top-in .logo").insertAdjacentHTML("afterend", `<div class="jump"><input class="t" id="jump" list="jump-list" placeholder="Jump to an athlete, team or program" aria-label="Jump to an athlete, team or program" autocomplete="off"><datalist id="jump-list"></datalist></div>`);
+    box = document.querySelector(".jump");
+  }
+  box.hidden = false;
+  document.getElementById("jump-list").innerHTML = jumpTargets().map(([l]) => `<option value="${esc(l)}">`).join("");
+}
+function jumpTo(input) {
+  const hit = jumpTargets().find(([l]) => l === input.value);
+  if (!hit || (bd?.unsaved && !confirm("Leave without saving this breakdown?"))) return;
+  const [, kind, id] = hit;
+  input.value = ""; input.blur();
+  go(() => {
+    ui.view = kind; ui.sess = null; ui.confirmDelProgram = false; ui.confirmDelTeam = false;
+    if (kind === "client") { ui.clientId = id; ui.clientTab = "profile"; ui.chatRef = null; }
+    else if (kind === "team") ui.teamId = id;
+    else { ui.programId = id; ui.week = 0; }
+  });
+  scrollTo(0, 0);
 }
 function render() {
   renderTabs();
@@ -470,11 +506,18 @@ function vPrograms() {
 }
 // The program as a grid: weeks down the page, Day 1 to Day 7 across, each session a card.
 function sessCard(wi, day, current) {
-  const labels = blockLabels(day.exercises);
-  return `<button class="sess${current ? " on" : ""}" data-act="open-sess" data-w="${wi}" data-id="${day.id}"><span class="sess-name">${esc(day.name || "Session")}</span>
-    ${day.exercises.map((e, i) => `<span class="sx${/\d$/.test(labels[i] || "") ? " ss" : ""}"><span class="lb">${labels[i] || ""}</span><span class="sx-t"><span>${esc(e.name || "New exercise")}</span><span class="muted small num">${esc(shortRx(e))}</span></span></span>`).join("")}
-    ${day.exercises.length ? "" : '<span class="muted small">No exercises yet</span>'}</button>`;
+  const labels = blockLabels(day.exercises), at = `data-w="${wi}" data-id="${day.id}"`;
+  // A block's result tag (FOR TIME, FOR REPS...) goes under its last exercise, once per block.
+  const tag = (e, i) => { const sc = String(e.score || "").replace(/[()]/g, "").trim(), nx = day.exercises[i + 1];
+    return sc && !(nx && nx.block && nx.block === e.block && nx.score === e.score) ? `<span class="trophy">${TROPHY}${esc(sc)}</span>` : ""; };
+  return `<div class="sess-box"><button class="sess${current ? " on" : ""}" data-act="open-sess" ${at}><span class="sess-name">${esc(day.name || "Session")}</span>
+    ${day.exercises.map((e, i) => `<span class="sx${/\d$/.test(labels[i] || "") ? " ss" : ""}"><span class="lb">${labels[i] || ""}</span><span class="sx-t"><span>${esc(e.name || "New exercise")}</span><span class="muted small num">${esc(shortRx(e))}</span>${tag(e, i)}</span></span>`).join("")}
+    ${day.exercises.length ? "" : '<span class="muted small">No exercises yet</span>'}</button>
+    <details class="kebab"><summary aria-label="Options for ${esc(day.name || "session")}">&#8942;</summary><div class="kmenu">
+      <button data-act="open-sess" ${at}>Edit</button><button data-act="card-copy" ${at}>Copy</button><button data-act="card-dup" ${at}>Duplicate here</button>
+      <button data-act="card-repeat" ${at}>Repeat in later weeks</button><button class="danger" data-act="card-del" ${at}>Delete</button></div></details></div>`;
 }
+const TROPHY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3M12 14v4M8 21h8M9 18h6"/></svg>';
 function vProgramEdit() {
   const p = program(ui.programId);
   if (!p) { ui.view = null; return vPrograms(); }
@@ -1273,6 +1316,7 @@ document.addEventListener("submit", async (ev) => {
 });
 
 document.addEventListener("click", async (ev) => {
+  document.querySelectorAll("details.kebab[open]").forEach((x) => { if (!x.contains(ev.target) || ev.target.closest(".kmenu")) x.open = false; });
   const b = ev.target.closest("[data-act]");
   if (!b || b.disabled) return;
   const { act, v, id } = b.dataset, d = +b.dataset.d, e = +b.dataset.e;
@@ -1521,6 +1565,30 @@ document.addEventListener("click", async (ev) => {
       if (p.weeks[wi].days.length && !confirm(`Delete week ${wi + 1} and its ${p.weeks[wi].days.length} sessions?`)) return;
       progEdit(() => p.weeks.splice(wi, 1)); break;
     }
+    case "card-copy": case "card-dup": case "card-repeat": case "card-del": {
+      const wi = +b.dataset.w, days = p.weeks[wi]?.days || [], x = days.find((y) => y.id === id);
+      if (!x) return;
+      const where = `Day ${dayNum(x.dow)}`;
+      if (act === "card-copy") {
+        clip.set({ kind: "session", label: `${x.name || "Session"} (week ${wi + 1} day ${dayNum(x.dow)})`, data: x }); render();
+        toast("Session copied. Tap Paste on any day, in any program.");
+      } else if (act === "card-dup") {
+        progEdit(() => days.splice(days.indexOf(x) + 1, 0, freshDay(x))); toast(`Duplicated on ${where}.`);
+      } else if (act === "card-repeat") {
+        const left = p.weeks.length - wi - 1;
+        if (!left) { toast("This is the last week. Add a week first."); return; }
+        const n = Math.min(parseInt(prompt(`Repeat ${x.name || "this session"} on ${where} of how many later weeks? (1 to ${left})`, String(left)), 10), left);
+        if (!(n >= 1)) return;
+        progEdit(() => { for (let i = 1; i <= n; i++) p.weeks[wi + i].days.push(freshDay(x)); });
+        toast(n === 1 ? `Added to ${where} of week ${wi + 2}.` : `Added to ${where} of weeks ${wi + 2} to ${wi + 1 + n}.`);
+      } else {
+        if (!confirm(`Delete ${x.name || "this session"}?`)) return;
+        days.splice(days.indexOf(x), 1);
+        if (ui.sess?.id === id) go(() => { ui.view = "program"; ui.sess = null; }); else render();
+        saveProgramSoon();
+      }
+      break;
+    }
     case "open-sess": go(() => { ui.week = +b.dataset.w; ui.sess = { w: +b.dataset.w, id }; ui.view = "session"; }); scrollTo(0, 0); break;
     case "sess-day": {
       const wi = +b.dataset.w, dw = +b.dataset.dow, first = p.weeks[wi].days.find((x) => x.dow === dw);
@@ -1621,6 +1689,7 @@ async function patchProfile(id, patch, msg) {
 }
 
 document.addEventListener("input", (ev) => {
+  if (ev.target.id === "jump") return jumpTo(ev.target);
   const t = ev.target, a = t.dataset.input;
   if (t.id === "v-note") { ui.vnote = t.value; return; }
   if (t.id === "v-ex") { ui.filmEx = t.value; return; }
