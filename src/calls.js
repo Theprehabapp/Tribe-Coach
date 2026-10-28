@@ -1,4 +1,4 @@
-// Monthly check-in calls: 30-minute slots in the last days of each month, in the coach's time zone.
+// Monthly check-in calls: 30-minute slots in the first days of each month, in the coach's time zone.
 // Pure functions, no DOM, so they can be tested. The database checks the same rules on booking (0016).
 
 export const CALL_MINUTES = 30;
@@ -27,10 +27,10 @@ export function zoned(ymd, time, tz) {
 
 const lastDay = (month) => { const [y, m] = month.split("-").map(Number); return new Date(Date.UTC(y, m, 0)).getUTCDate(); };
 export const nextMonth = (month) => { const [y, m] = month.split("-").map(Number); return m === 12 ? `${y + 1}-01` : `${y}-${pad(m + 1)}`; };
-// The dates the call week covers: the last `window` days of the month.
+// The dates the call week covers: the first `window` days of the month.
 export function windowDays(month, cfg) {
-  const n = lastDay(month), w = Math.max(1, Math.min(+cfg.window || 7, n));
-  return Array.from({ length: w }, (_, i) => `${month}-${pad(n - w + 1 + i)}`);
+  const w = Math.max(1, Math.min(+cfg.window || 7, lastDay(month)));
+  return Array.from({ length: w }, (_, i) => `${month}-${pad(i + 1)}`);
 }
 // Every slot of a month's call week, booked or not: { at: ISO instant, ymd, time } in the coach's zone.
 export function slotsFor(month, cfg) {
