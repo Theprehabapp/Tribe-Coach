@@ -701,7 +701,7 @@ function checkinHistory(cid) {
 }
 
 /* ----- coach: clients ----- */
-/* ----- monthly check-in calls: athletes book a 30-minute slot in the last days of the month ----- */
+/* ----- monthly check-in calls: athletes book a 30-minute slot in the first days of the month ----- */
 const callCfg = () => ({ ...DEFAULT_CALLS, ...(D.callCfg || {}) });
 const iso = (t) => new Date(t).toISOString();
 const coachFirst = () => (D.profiles.find((p) => p.role === "coach")?.name || "your coach").split(" ")[0];
@@ -720,7 +720,7 @@ function callCard() {
   if (!cfg.on) return "";
   const month = callMonth(cfg), mine = D.calls.find((c) => c.client_id === me.id && c.month === month), mname = monthName(month);
   if (!mine) return `<section class="card stack callcard"><h3>Book your ${mname} check-in call</h3>
-    <p class="small muted">30 minutes with ${esc(coachFirst())} in the last week of ${mname}. Book your time whenever suits you this month.</p>
+    <p class="small muted">30 minutes with ${esc(coachFirst())} in the first week of ${mname}. Book your time any time before then.</p>
     <div class="row"><button class="btn primary" data-act="calls">See open times</button></div></section>`;
   const late = new Date(mine.starts_at) - Date.now() < 12 * 36e5;
   return `<section class="card stack callcard"><div class="row spread"><h3>Check-in call booked</h3><span class="chip green">${mname}</span></div>
@@ -783,7 +783,7 @@ function callSettings(cfg, month) {
     <div class="row">${DAY_ORDER.map((n) => `<label class="chip cc-day"><input type="checkbox" data-change="cc" data-day="${n}"${cfg.days.includes(n) ? " checked" : ""}> ${DOW_LONG[n].slice(0, 3)}</label>`).join("")}</div>
     <div class="grid3"><label class="f">From<input class="t" type="time" step="1800" id="cc-start" data-change="cc" value="${esc(cfg.start)}"></label>
     <label class="f">To<input class="t" type="time" step="1800" id="cc-end" data-change="cc" value="${esc(cfg.end)}"></label>
-    <label class="f">Last days of the month<input class="t num" type="number" min="1" max="14" id="cc-window" data-change="cc" value="${esc(cfg.window)}"></label></div>
+    <label class="f">First days of the month<input class="t num" type="number" min="1" max="14" id="cc-window" data-change="cc" value="${esc(cfg.window)}"></label></div>
     <p class="small muted">Times are ${esc(city(cfg.tz))} time. Changes apply straight away; calls already booked stay booked.</p></section>`;
 }
 function vClients() {
