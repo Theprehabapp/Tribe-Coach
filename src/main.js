@@ -1620,6 +1620,43 @@ document.addEventListener("click", async (ev) => {
       p.weeks.splice(wi + 1, 0, copy);
       toast(`Copied to week ${wi + 2}. Percentages moved up 2.5% and calibration notes changed to adding load. Check each line.`);
     }); break;
+    case "calls": openCalls(); break;
+    case "call-month": openCalls(v); break;
+    case "call-book": {
+      const at = b.dataset.at, month = ui.callMonth, old = D.calls.find((c) => c.client_id === me.id && c.month === month);
+      if (!confirm(old ? `Move your check-in call to ${fmtCall(at)}?` : `Book your check-in call for ${fmtCall(at)}?`)) return;
+      b.disabled = true;
+      try {
+        if (old) { await api.cancelCall(old.id); D.calls = D.calls.filter((c) => c !== old); }
+        D.calls.push(await api.bookCall(me.id, at));
+        go(() => { ui.view = null; ui.tab = "today"; }); scrollTo(0, 0);
+        toast("Booked. A calendar invite is on its way to your email.");
+      } catch (err) {
+        toast(/duplicate|unique|taken/i.test(err.message || "") ? "Someone just took that time. Pick another one." : `That didn't book: ${err.message || err}`);
+        openCalls(month);
+      }
+      break;
+    }
+    case "call-block":
+      try { const row = await api.bookCall(null, b.dataset.at); D.calls.push(row); ui.taken.add(iso(row.starts_at)); render(); }
+      catch (err) { fail(err, "Blocking that time"); }
+      break;
+    case "call-unblock": case "call-cancel": {
+      const r = D.calls.find((c) => c.id === id);
+      if (!r) return;
+      if (act === "call-cancel" && !confirm(`Cancel ${profile(r.client_id)?.name || "this athlete"}'s call on ${fmtCall(r.starts_at)}? They get an email saying so.`)) return;
+      try { await api.cancelCall(id); D.calls = D.calls.filter((c) => c !== r); ui.taken.delete(iso(r.starts_at)); render(); }
+      catch (err) { fail(err, "Cancelling"); }
+      break;
+    }
+    case "call-ics": {
+      const r = D.calls.find((c) => c.id === id);
+      if (!r) return;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([icsFile(r.starts_at, `Tribe check-in call with ${coachFirst()}`, "Booked in Tribe Coach.", r.id)], { type: "text/calendar" }));
+      a.download = "tribe-check-in-call.ics"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1e4);
+      break;
+    }
     case "add-week": progEdit(() => p.weeks.push({ days: [] })); break;
     case "clip-week": {
       const wi = +b.dataset.w;
@@ -1685,43 +1722,6 @@ document.addEventListener("click", async (ev) => {
         if (ui.sess?.id === id) go(() => { ui.view = "program"; ui.sess = null; }); else render();
         saveProgramSoon();
       }
-      break;
-    }
-    case "calls": openCalls(); break;
-    case "call-month": openCalls(v); break;
-    case "call-book": {
-      const at = b.dataset.at, month = ui.callMonth, old = D.calls.find((c) => c.client_id === me.id && c.month === month);
-      if (!confirm(old ? `Move your check-in call to ${fmtCall(at)}?` : `Book your check-in call for ${fmtCall(at)}?`)) return;
-      b.disabled = true;
-      try {
-        if (old) { await api.cancelCall(old.id); D.calls = D.calls.filter((c) => c !== old); }
-        D.calls.push(await api.bookCall(me.id, at));
-        go(() => { ui.view = null; ui.tab = "today"; }); scrollTo(0, 0);
-        toast("Booked. A calendar invite is on its way to your email.");
-      } catch (err) {
-        toast(/duplicate|unique|taken/i.test(err.message || "") ? "Someone just took that time. Pick another one." : `That didn't book: ${err.message || err}`);
-        openCalls(month);
-      }
-      break;
-    }
-    case "call-block":
-      try { const row = await api.bookCall(null, b.dataset.at); D.calls.push(row); ui.taken.add(iso(row.starts_at)); render(); }
-      catch (err) { fail(err, "Blocking that time"); }
-      break;
-    case "call-unblock": case "call-cancel": {
-      const r = D.calls.find((c) => c.id === id);
-      if (!r) return;
-      if (act === "call-cancel" && !confirm(`Cancel ${profile(r.client_id)?.name || "this athlete"}'s call on ${fmtCall(r.starts_at)}? They get an email saying so.`)) return;
-      try { await api.cancelCall(id); D.calls = D.calls.filter((c) => c !== r); ui.taken.delete(iso(r.starts_at)); render(); }
-      catch (err) { fail(err, "Cancelling"); }
-      break;
-    }
-    case "call-ics": {
-      const r = D.calls.find((c) => c.id === id);
-      if (!r) return;
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([icsFile(r.starts_at, `Tribe check-in call with ${coachFirst()}`, "Booked in Tribe Coach.", r.id)], { type: "text/calendar" }));
-      a.download = "tribe-check-in-call.ics"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1e4);
       break;
     }
     case "open-sess": go(() => { ui.week = +b.dataset.w; ui.sess = { w: +b.dataset.w, id }; ui.view = "session"; }); scrollTo(0, 0); break;
