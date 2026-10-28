@@ -6,7 +6,7 @@ const role = new URLSearchParams(location.search).get("as") || "coach";
 const coach = { id: "c", email: "coach@x", name: "Coach", role: "coach", approved: true, goal: "" };
 const amy = { id: "a", email: "amy@x", name: "Amy", role: "client", approved: true, goal: "", program_id: null, start_date: "2026-09-28" };
 const ben = { id: "b", email: "ben@x", name: "Ben", role: "client", approved: false, goal: "" };
-const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [], prs: [], prHistory: [], checkins: [], invites: [] };
+const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [], prs: [], prHistory: [], checkins: [], invites: [], calls: [] };
 if (new URLSearchParams(location.search).get("seed")) {
   db.programs.push({ id: "p-seed", ...exampleProgram() }); amy.program_id = "p-seed";
   db.logs.push({ id: "l-seed", client_id: "a", program_id: "p-seed", week: 0, day_id: db.programs[0].weeks[0].days[0].id, date: "2026-09-28", done: true, note: "", entries: [] });
@@ -38,6 +38,14 @@ if (new URLSearchParams(location.search).get("hist")) [["2026-09-14", 100, 140],
   db.logs.push({ id: "h" + i, client_id: "a", program_id: "gone", week: i, day_id: "x", date, done: true, note: "", entries: [
     { exId: "s", name: "Back Squat", sets: [{ reps: "5", kg: String(sq), rpe: "", done: true }, { reps: "5", kg: String(sq), rpe: "", done: true }] },
     { exId: "d", name: "Deadlift", sets: [{ reps: "3", kg: String(dl), rpe: "", done: true }] }] }));
+// Check-in calls: Sydney hours on weekdays. ?calls=1 seeds two taken slots on the coming Thursday of the call week.
+const callCfg = { on: true, days: [1, 2, 3, 4, 5], start: "09:00", end: "17:00", tz: "Australia/Sydney", window: 7 };
+if (new URLSearchParams(location.search).get("calls")) {
+  const { callMonth, slotsFor } = await import("../../src/calls.js");
+  const m = callMonth(callCfg), open = slotsFor(m, callCfg).filter((x) => new Date(x.at) > new Date());
+  const day = open[Math.min(open.length - 1, 20)]?.ymd, pick = open.filter((x) => x.ymd === day);
+  if (pick.length > 3) db.calls.push({ id: "k1", client_id: "z", starts_at: pick[2].at, month: m }, { id: "k2", client_id: null, starts_at: pick[3].at, month: m });
+}
 const meRow = role === "coach" ? coach : amy;
 export const getSession = async () => (role === "none" ? null : { user: { id: meRow.id } });
 export const onAuth = () => {};
@@ -47,7 +55,8 @@ export const sendReset = async () => {};
 export const setPassword = async () => {};
 export const signOut = async () => {};
 export const myProfile = async () => { if (window.__offline) throw new TypeError("Failed to fetch"); return meRow; };
-export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips"), progReady: true, teamsReady: true, socialReady: true, prsReady: !new URLSearchParams(location.search).get("noprs"), checkinsReady: true, invitesReady: true });
+export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips"), progReady: true, teamsReady: true, socialReady: true, prsReady: !new URLSearchParams(location.search).get("noprs"), checkinsReady: true, invitesReady: true,
+  callCfg: structuredClone(callCfg), callsReady: true, calls: structuredClone(role === "coach" ? db.calls : db.calls.filter((c) => c.client_id === meRow.id)) });
 const listeners = [];
 export const onMessage = (fn) => { listeners.push(fn); return () => {}; };
 window.__incoming = (body, video_id = null) => { const m = { id: "m" + Math.random(), client_id: "a", sender_id: role === "coach" ? "a" : "c", body, video_id, clip_path: null, created_at: new Date().toISOString(), read_at: null }; db.messages.push(m); listeners.forEach((f) => f(structuredClone(m))); };
@@ -107,3 +116,9 @@ export const teamBoard = async (team) => {
   const amyBest = {}; db.logs.filter((l) => l.client_id === "a" && l.done).forEach((l) => l.entries.forEach((en) => en.sets.forEach((st) => { const kg = +st.kg, r = +st.reps; if (!(kg > 0 && r > 0 && r <= 12)) return; const e = r === 1 ? kg : Math.round(kg * (1 + r / 30) * 10) / 10; if (!amyBest[en.name] || e > amyBest[en.name].e1rm) amyBest[en.name] = { client_id: "a", athlete: "Amy", exercise: en.name, e1rm: e, kg, reps: r, day: l.date }; })));
   window.__board = team; return [...mates, ...Object.values(amyBest)];
 };
+
+export const bookCall = async (client_id, starts_at) => { if (db.calls.some((c) => c.starts_at === starts_at)) throw new Error("taken");
+  const { monthOf } = await import("../../src/calls.js"); const row = { id: "k" + Date.now(), client_id, starts_at, month: monthOf(starts_at, callCfg) }; db.calls.push(row); return structuredClone(row); };
+export const cancelCall = async (id) => { db.calls = db.calls.filter((c) => c.id !== id); };
+export const takenCalls = async (month) => db.calls.filter((c) => c.month === month).map((c) => c.starts_at);
+export const saveCallCfg = async (cfg) => { Object.assign(callCfg, cfg); window.__callCfg = structuredClone(cfg); };

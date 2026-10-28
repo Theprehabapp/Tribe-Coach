@@ -133,6 +133,19 @@ textarea.t { min-height: 72px; resize: vertical; line-height: 1.5; }
 .lockup .tag { font-size: 8.5px; font-weight: 500; letter-spacing: .32em; text-transform: uppercase; color: var(--muted); }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-weight: 600; font-size: 14px; z-index: 9; max-width: calc(100% - 32px); }
 .empty { padding: 22px 16px; border: 1px dashed var(--rule); border-radius: 12px; color: var(--muted); text-align: center; }
+/* Check-in call times: open ones outlined, taken ones faded. */
+.slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.slot { border: 1.5px solid var(--fg); background: var(--surface); color: var(--fg); border-radius: 10px; padding: 10px 6px; font-weight: 700; font-size: 14px; cursor: pointer; text-align: center; font-variant-numeric: tabular-nums; }
+.slot:hover:not(:disabled) { background: var(--fg); color: var(--bg); }
+.slot.taken { opacity: .3; border-color: var(--rule); text-decoration: line-through; }
+.slot:disabled { cursor: default; }
+.slot.mine, .slot.booked { background: var(--fg); color: var(--bg); }
+.slot .who { display: block; font-size: 11px; font-weight: 600; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+@media (max-width: 560px) { .grid3 { grid-template-columns: 1fr 1fr; } }
+.cc-day { cursor: pointer; }
+.cc-day input { margin: 0; }
+a.btn { color: var(--fg); text-decoration: none; display: inline-flex; align-items: center; }
 details > summary { cursor: pointer; font-weight: 600; color: var(--muted); }
 @media (prefers-reduced-motion: no-preference) { .item, .btn { transition: border-color .15s; } }
 
