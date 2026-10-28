@@ -392,3 +392,17 @@ body.coach .tabs button[aria-current="page"]::before { content: ""; position: ab
 /* Room below the grid for the last row's menu, without blocking clicks underneath. */
 .pgrid-wrap { padding-bottom: 220px; margin-bottom: -220px; pointer-events: none; }
 .pgrid { pointer-events: auto; }
+
+/* Check-in call times: open ones outlined, taken ones faded. */
+.slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.slot { border: 1.5px solid var(--fg); background: var(--surface); color: var(--fg); border-radius: 10px; padding: 10px 6px; font-weight: 700; font-size: 14px; cursor: pointer; text-align: center; font-variant-numeric: tabular-nums; }
+.slot:hover:not(:disabled) { background: var(--fg); color: var(--bg); }
+.slot.taken { opacity: .3; border-color: var(--rule); text-decoration: line-through; }
+.slot:disabled { cursor: default; }
+.slot.mine, .slot.booked { background: var(--fg); color: var(--bg); }
+.slot .who { display: block; font-size: 11px; font-weight: 600; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+@media (max-width: 560px) { .grid3 { grid-template-columns: 1fr 1fr; } }
+.cc-day { cursor: pointer; }
+.cc-day input { margin: 0; }
+a.btn { color: var(--fg); text-decoration: none; display: inline-flex; align-items: center; }

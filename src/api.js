@@ -33,7 +33,7 @@ export async function myProfile(uid) {
 
 // RLS decides what comes back: the coach gets everyone, a client gets their own rows and assigned program.
 export async function loadAll() {
-  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs, prHistory, checkins, invites] = await Promise.all([
+  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs, prHistory, checkins, invites, callSettings, calls] = await Promise.all([
     sb.from("profiles").select("*").order("created_at").then(check),
     sb.from("programs").select("*").order("created_at", { ascending: false }).then(check),
     sb.from("logs").select("*").order("date", { ascending: false }).then(check),
@@ -54,12 +54,22 @@ export async function loadAll() {
     sb.from("checkins").select("*").gte("day", new Date(Date.now() - 28 * 864e5).toISOString().slice(0, 10)).order("day", { ascending: false }).then(check).catch(() => null),
     // Team invites by email arrived with migration 0014.
     sb.from("team_invites").select("*").order("email").then(check).catch(() => null),
+    // Monthly check-in calls arrived with migration 0016. A client gets only their own bookings.
+    sb.from("settings").select("calls").eq("id", 1).maybeSingle().then(check).catch(() => null),
+    sb.from("calls").select("*").order("starts_at").then(check).catch(() => null),
   ]);
   // Labelled breakdown clips arrived with migration 0006; until it's run, one breakdown per video as before.
   return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages, clipsReady: videos.some((v) => "clips" in v),
     exercises: exercises || [], maxes: maxes || [], progReady: !!exercises && !!maxes,
-    teams: teams || [], teamsReady: !!teams, socialReady: social, prs: prs || [], prHistory: prHistory || [], prsReady: !!prs && !!prHistory, checkins: checkins || [], checkinsReady: !!checkins, invites: invites || [], invitesReady: !!invites };
+    teams: teams || [], teamsReady: !!teams, socialReady: social, prs: prs || [], prHistory: prHistory || [], prsReady: !!prs && !!prHistory, checkins: checkins || [], checkinsReady: !!checkins, invites: invites || [], invitesReady: !!invites,
+    callCfg: callSettings?.calls || null, calls: calls || [], callsReady: !!calls && !!callSettings?.calls };
 }
+
+/* ---------- check-in calls ---------- */
+export const bookCall = (client_id, starts_at) => sb.from("calls").insert({ client_id, starts_at }).select().single().then(check);
+export const cancelCall = (id) => sb.from("calls").delete().eq("id", id).then(check);
+export const takenCalls = (month) => sb.rpc("taken_calls", { for_month: month }).then(check);
+export const saveCallCfg = (calls) => sb.from("settings").update({ calls }).eq("id", 1).then(check);
 
 /* ---------- profiles ---------- */
 export const updateProfile = (id, patch) => sb.from("profiles").update(patch).eq("id", id).select().single().then(check);

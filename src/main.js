@@ -7,6 +7,7 @@ import * as notify from "./notify.js";
 import { liftSets, series, records, newPRs } from "./progress.js";
 import { PR_LIFTS, PR_SETS, KINDS, validScore, scoreKind, prTarget, beats } from "./scores.js";
 import { openTimer, closeTimer, presetFor, restSecs } from "./timer.js";
+import { DEFAULT_CALLS, slotsFor, callMonth, nextMonth, googleLink, icsFile } from "./calls.js";
 import {
   FEEDBACK_HOURS, DOW_LONG, W1_LINE, ymd, fmtDay, fmtLong, fmtTime,
   dueAt, timeLeft, weekOf, sessionDate, rxLine, bumpTarget, blockLabels, exKey, hasPct, pctLoad,
@@ -195,7 +196,7 @@ function vPending(noProfile) {
 /* ---------- main render ---------- */
 // The rail keeps its section lit inside it too: a program or session is under Programs, an athlete or team under Clients.
 const section = () => !isCoach() || !ui.view ? (ui.view ? null : ui.tab)
-  : ({ program: "programs", session: "programs", exlib: "programs", client: "clients", team: "clients", review: ui.lib ? "clients" : "queue" })[ui.view] || null;
+  : ({ program: "programs", session: "programs", exlib: "programs", client: "clients", team: "clients", calls: "clients", review: ui.lib ? "clients" : "queue" })[ui.view] || null;
 function renderTabs() {
   const tabs = isCoach()
     ? [["queue", "Review", waiting().length], ["programs", "Programs"], ["clients", "Clients", clients().filter((c) => !c.approved).length + clients().reduce((n, c) => n + unread(c.id), 0)]]
@@ -251,6 +252,7 @@ function render() {
   else if (ui.view === "log") html = vLog();
   else if (ui.view === "exlib") html = vExLib();
   else if (ui.view === "team") html = vTeam();
+  else if (ui.view === "calls") html = vCalls();
   else if (ui.view === "password") html = vSetPassword(false);
   else if (ui.view === "review") html = vReview();
   else if (isCoach()) html = ui.tab === "queue" ? vQueue() : ui.tab === "programs" ? vPrograms() : vClients();
@@ -699,13 +701,98 @@ function checkinHistory(cid) {
 }
 
 /* ----- coach: clients ----- */
+/* ----- monthly check-in calls: athletes book a 30-minute slot in the last days of the month ----- */
+const callCfg = () => ({ ...DEFAULT_CALLS, ...(D.callCfg || {}) });
+const iso = (t) => new Date(t).toISOString();
+const coachFirst = () => (D.profiles.find((p) => p.role === "coach")?.name || "your coach").split(" ")[0];
+const monthName = (month) => new Date(+month.slice(0, 4), +month.slice(5) - 1, 15).toLocaleString("en-AU", { month: "long" });
+// Times show on the viewer's own clock.
+const fmtClock = (at) => new Date(at).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit" }).replace(/\s/g, "").toLowerCase();
+const fmtCall = (at) => `${fmtLong(new Date(at))}, ${fmtClock(at)}`;
+const myTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const city = (tz) => tz.split("/").pop().replace(/_/g, " ");
+const tzNote = (cfg) => (myTz === cfg.tz ? `Times are ${city(cfg.tz)} time.` : `Times are shown in your time zone (${city(myTz)}).`);
+
+// Athlete, Training tab: book this month's call, or see the booked one with calendar buttons.
+function callCard() {
+  if (!D.callsReady || isCoach()) return "";
+  const cfg = callCfg();
+  if (!cfg.on) return "";
+  const month = callMonth(cfg), mine = D.calls.find((c) => c.client_id === me.id && c.month === month), mname = monthName(month);
+  if (!mine) return `<section class="card stack callcard"><h3>Book your ${mname} check-in call</h3>
+    <p class="small muted">30 minutes with ${esc(coachFirst())} in the last week of ${mname}. Book your time whenever suits you this month.</p>
+    <div class="row"><button class="btn primary" data-act="calls">See open times</button></div></section>`;
+  const late = new Date(mine.starts_at) - Date.now() < 12 * 36e5;
+  return `<section class="card stack callcard"><div class="row spread"><h3>Check-in call booked</h3><span class="chip green">${mname}</span></div>
+    <p><strong>${fmtCall(mine.starts_at)}</strong> <span class="small muted">30 minutes</span></p>
+    <div class="row"><a class="btn small" target="_blank" rel="noopener" href="${esc(googleLink(mine.starts_at, `Tribe check-in call with ${coachFirst()}`, "Booked in Tribe Coach."))}">Add to Google Calendar</a>
+    <button class="btn small ghost" data-act="call-ics" data-id="${mine.id}">Apple or Outlook calendar</button>${late ? "" : '<button class="btn small ghost" data-act="calls">Change time</button>'}</div>
+    <p class="small muted">${late ? "It's less than 12 hours away, so it can't be moved here. Message your coach if you need to." : "An invite was emailed to you too."}</p></section>`;
+}
+// Coach, Clients tab: who has booked this month.
+function callsToday() {
+  if (!D.callsReady) return "";
+  const cfg = callCfg(), month = callMonth(cfg), booked = D.calls.filter((c) => c.month === month && c.client_id).sort((a, b) => iso(a.starts_at).localeCompare(iso(b.starts_at)));
+  const n = clients().filter((c) => c.approved).length;
+  return `<section class="stack"><div class="section-head"><h2>${monthName(month)} check-in calls</h2><button class="btn small" data-act="calls">Hours and times</button></div>
+    ${!cfg.on ? '<p class="small muted">Booking is switched off.</p>' : booked.length ? `<div class="list">${booked.map((c) => `<div class="item static row spread"><strong>${esc(profile(c.client_id)?.name || profile(c.client_id)?.email || "Athlete")}</strong><span class="small num">${fmtCall(c.starts_at)}</span></div>`).join("")}</div>` : ""}
+    <p class="small muted">${booked.length} of ${n} athlete${n === 1 ? "" : "s"} booked.</p></section>`;
+}
+async function openCalls(month) {
+  month ||= callMonth(callCfg());
+  go(() => { ui.view = "calls"; ui.callMonth = month; ui.taken = null; }); scrollTo(0, 0);
+  try { ui.taken = new Set((isCoach() ? D.calls.filter((c) => c.month === month).map((c) => c.starts_at) : await api.takenCalls(month)).map(iso)); }
+  catch (e) { ui.taken = new Set(); toast(`Couldn't load the booked times: ${e.message || e}`); }
+  if (ui.view === "calls") render();
+}
+function vCalls() {
+  const cfg = callCfg(), month = ui.callMonth || callMonth(cfg), now = Date.now();
+  const mine = !isCoach() && D.calls.find((c) => c.client_id === me.id && c.month === month);
+  const days = new Map();
+  for (const s of slotsFor(month, cfg)) { const k = ymd(new Date(s.at)); if (!days.has(k)) days.set(k, []); days.get(k).push(s); }
+  let out = `<div class="row"><button class="link" data-act="back">Back</button></div>
+    <section class="hero"><div class="kicker">Check-in call</div><h1>${monthName(month)}</h1>
+    <p class="muted small">${isCoach() ? "Tap an open time to block it, or a blocked one to open it again. Tap a booked call to cancel it." : `30 minutes with ${esc(coachFirst())}. ${mine ? `You're booked for ${fmtCall(mine.starts_at)}; tap another time to move it.` : "Tap a time to book it. Faded times are taken."}`} ${tzNote(cfg)}</p></section>`;
+  if (isCoach()) out += callSettings(cfg, month);
+  if (!ui.taken) return out + '<div class="empty">Loading times</div>';
+  if (!cfg.on && !isCoach()) return out + '<div class="empty">Booking is closed for now.</div>';
+  if (!days.size) return out + '<div class="empty">No times open. Pick at least one day and a from and to time.</div>';
+  for (const [day, list] of days) {
+    const open = list.filter((s) => new Date(s.at) > now && !ui.taken.has(s.at)).length;
+    if (!isCoach() && new Date(list[list.length - 1].at) <= now) continue; // athletes don't need days already gone
+    out += `<section class="stack"><div class="section-head"><h2>${fmtLong(parseYmd(day))}</h2><span class="small muted num">${open} open</span></div><div class="slots">${list.map((s) => {
+      const past = new Date(s.at) <= now, t = fmtClock(s.at);
+      if (isCoach()) {
+        const r = D.calls.find((c) => iso(c.starts_at) === s.at);
+        if (r?.client_id) return `<button class="slot booked" data-act="call-cancel" data-id="${r.id}">${t}<span class="who">${esc(profile(r.client_id)?.name || "Athlete")}</span></button>`;
+        if (r) return `<button class="slot taken" data-act="call-unblock" data-id="${r.id}" aria-label="${t}, blocked. Open it again">${t}<span class="who">Blocked</span></button>`;
+        return `<button class="slot${past ? " taken" : ""}" data-act="call-block" data-at="${s.at}"${past ? " disabled" : ""}>${t}</button>`;
+      }
+      if (mine && iso(mine.starts_at) === s.at) return `<button class="slot mine" disabled>${t}<span class="who">Yours</span></button>`;
+      const off = past || ui.taken.has(s.at);
+      return `<button class="slot${off ? " taken" : ""}" data-act="call-book" data-at="${s.at}"${off ? ` disabled aria-label="${t}, taken"` : ""}>${t}</button>`;
+    }).join("")}</div></section>`;
+  }
+  return out;
+}
+function callSettings(cfg, month) {
+  const cur = callMonth(cfg);
+  return `<section class="card stack"><div class="row spread"><h3>Your hours</h3><div class="seg" role="group" aria-label="Month">${[[cur, "This month"], [nextMonth(cur), "Next month"]].map(([m, l]) =>
+      `<button data-act="call-month" data-v="${m}" aria-pressed="${month === m}">${l}</button>`).join("")}</div></div>
+    <label class="row small"><input type="checkbox" id="cc-on" data-change="cc"${cfg.on ? " checked" : ""}> Athletes can book check-in calls</label>
+    <div class="row">${DAY_ORDER.map((n) => `<label class="chip cc-day"><input type="checkbox" data-change="cc" data-day="${n}"${cfg.days.includes(n) ? " checked" : ""}> ${DOW_LONG[n].slice(0, 3)}</label>`).join("")}</div>
+    <div class="grid3"><label class="f">From<input class="t" type="time" step="1800" id="cc-start" data-change="cc" value="${esc(cfg.start)}"></label>
+    <label class="f">To<input class="t" type="time" step="1800" id="cc-end" data-change="cc" value="${esc(cfg.end)}"></label>
+    <label class="f">Last days of the month<input class="t num" type="number" min="1" max="14" id="cc-window" data-change="cc" value="${esc(cfg.window)}"></label></div>
+    <p class="small muted">Times are ${esc(city(cfg.tz))} time. Changes apply straight away; calls already booked stay booked.</p></section>`;
+}
 function vClients() {
   const pending = clients().filter((c) => !c.approved);
   let out = `<section class="hero"><div class="kicker">Roster</div><h1>Clients</h1>
     <p class="muted small">To add a client, send them this app's link. They create an account with their email and a password, then appear below for you to approve.</p></section>`;
   if (pending.length) out += `<section class="stack"><div class="section-head"><h2>Waiting for approval</h2></div><div class="list">${pending.map((c) =>
     `<div class="item static"><div class="row spread"><div><strong>${esc(c.name || "No name")}</strong><p class="small muted">${esc(c.email)}</p></div><button class="btn small primary" data-act="approve" data-id="${c.id}">Approve</button></div></div>`).join("")}</div></section>`;
-  out += checkinsToday();
+  out += checkinsToday() + callsToday();
   if (D.teamsReady) out += `<section class="stack"><div class="section-head"><h2>Teams</h2><button class="btn small" data-act="team-new">New team</button></div>
     ${D.teams.length ? `<div class="list">${D.teams.map((t) => { const n = clients().filter((c) => c.team_id === t.id).length, p = program(t.program_id);
       return `<button class="item" data-act="open-team" data-id="${t.id}"><div class="row spread"><h3>${esc(t.name)}</h3><span class="chip num">${n} athlete${n === 1 ? "" : "s"}</span></div><p class="small muted">${p ? esc(p.name) : "No program"}${t.start_date ? `, from ${fmtDay(t.start_date)}` : ""}</p></button>`; }).join("")}</div>`
@@ -990,7 +1077,7 @@ async function hydrateBoards() {
 const logTitle = (l) => `${program(l.program_id)?.weeks[l.week]?.days.find((d) => d.id === l.day_id)?.name || "Session"}, ${fmtDay(l.date)}`;
 
 /* ----- client: training ----- */
-function vToday() { const h = vTodayPlan(), i = h.indexOf("</section>") + 10; return i > 9 ? h.slice(0, i) + checkinBox() + h.slice(i) : checkinBox() + h; }
+function vToday() { const h = vTodayPlan(), i = h.indexOf("</section>") + 10, top = checkinBox() + callCard(); return i > 9 ? h.slice(0, i) + top + h.slice(i) : top + h; }
 function vTodayPlan() {
   const { p, start } = planFor(me);
   let out = `<section class="hero"><div class="kicker">Hey ${esc(me.name || "there")}</div>`;
@@ -1600,6 +1687,43 @@ document.addEventListener("click", async (ev) => {
       }
       break;
     }
+    case "calls": openCalls(); break;
+    case "call-month": openCalls(v); break;
+    case "call-book": {
+      const at = b.dataset.at, month = ui.callMonth, old = D.calls.find((c) => c.client_id === me.id && c.month === month);
+      if (!confirm(old ? `Move your check-in call to ${fmtCall(at)}?` : `Book your check-in call for ${fmtCall(at)}?`)) return;
+      b.disabled = true;
+      try {
+        if (old) { await api.cancelCall(old.id); D.calls = D.calls.filter((c) => c !== old); }
+        D.calls.push(await api.bookCall(me.id, at));
+        go(() => { ui.view = null; ui.tab = "today"; }); scrollTo(0, 0);
+        toast("Booked. A calendar invite is on its way to your email.");
+      } catch (err) {
+        toast(/duplicate|unique|taken/i.test(err.message || "") ? "Someone just took that time. Pick another one." : `That didn't book: ${err.message || err}`);
+        openCalls(month);
+      }
+      break;
+    }
+    case "call-block":
+      try { const row = await api.bookCall(null, b.dataset.at); D.calls.push(row); ui.taken.add(iso(row.starts_at)); render(); }
+      catch (err) { fail(err, "Blocking that time"); }
+      break;
+    case "call-unblock": case "call-cancel": {
+      const r = D.calls.find((c) => c.id === id);
+      if (!r) return;
+      if (act === "call-cancel" && !confirm(`Cancel ${profile(r.client_id)?.name || "this athlete"}'s call on ${fmtCall(r.starts_at)}? They get an email saying so.`)) return;
+      try { await api.cancelCall(id); D.calls = D.calls.filter((c) => c !== r); ui.taken.delete(iso(r.starts_at)); render(); }
+      catch (err) { fail(err, "Cancelling"); }
+      break;
+    }
+    case "call-ics": {
+      const r = D.calls.find((c) => c.id === id);
+      if (!r) return;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([icsFile(r.starts_at, `Tribe check-in call with ${coachFirst()}`, "Booked in Tribe Coach.", r.id)], { type: "text/calendar" }));
+      a.download = "tribe-check-in-call.ics"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1e4);
+      break;
+    }
     case "open-sess": go(() => { ui.week = +b.dataset.w; ui.sess = { w: +b.dataset.w, id }; ui.view = "session"; }); scrollTo(0, 0); break;
     case "sess-day": {
       const wi = +b.dataset.w, dw = +b.dataset.dow, first = p.weeks[wi].days.find((x) => x.dow === dw);
@@ -1739,6 +1863,14 @@ document.addEventListener("change", async (ev) => {
   const t = ev.target;
   if (t.id === "vfile") { const f = t.files?.[0]; if (f) setFile(f); return; }
   if (t.id === "xl-file") { const f = t.files?.[0]; t.value = ""; if (f) { const bad = checkVideo(f); if (bad) return toast(bad); ui.demoFile = f; warmUp(); document.getElementById("xl-file-name").textContent = f.name; } return; }
+  if (t.dataset.change === "cc") {
+    const cfg = callCfg(), q = (id) => document.getElementById(id);
+    const next = { ...cfg, on: q("cc-on").checked, start: q("cc-start").value || cfg.start, end: q("cc-end").value || cfg.end,
+      window: Math.min(14, Math.max(1, +q("cc-window").value || 7)), days: [...document.querySelectorAll("[data-day]")].filter((x) => x.checked).map((x) => +x.dataset.day) };
+    if (next.end <= next.start) { toast("The to time needs to be after the from time."); render(); return; }
+    try { await api.saveCallCfg(next); D.callCfg = next; render(); toast("Saved."); } catch (err) { fail(err, "Your hours"); }
+    return;
+  }
   if (t.id === "ref-file") { const f = t.files?.[0]; t.value = ""; if (f) { warmUp(); addRef(f); } return; }
   const a = t.dataset.change; if (!a) return;
   if (a === "board-ex") { ui.boardEx = { ...ui.boardEx, [t.dataset.tid]: t.value }; document.querySelector(`[data-board="${t.dataset.tid}"]`).innerHTML = boardBody(t.dataset.tid); return; }
