@@ -782,7 +782,7 @@ function callCard() {
   return `<section class="card stack callcard"><div class="row spread"><h3>Check-in call booked</h3><span class="chip green">${mname}</span></div>
     <p><strong>${fmtCall(mine.starts_at)}</strong> <span class="small muted">30 minutes</span></p>
     <div class="row"><a class="btn small" target="_blank" rel="noopener" href="${esc(googleLink(mine.starts_at, `Tribe check-in call with ${coachFirst()}`, "Booked in Tribe Coach."))}">Add to Google Calendar</a>
-    <button class="btn small ghost" data-act="call-ics" data-id="${mine.id}">Apple or Outlook calendar</button>${late ? "" : '<button class="btn small ghost" data-act="calls">Change time</button>'}</div>
+    <button class="btn small ghost" data-act="call-ics" data-id="${mine.id}">Apple or Outlook calendar</button>${late ? "" : `<button class="btn small ghost" data-act="calls">Change time</button><button class="btn small ghost" data-act="call-cancel" data-id="${mine.id}">Cancel call</button>`}</div>
     <p class="small muted">${late ? "It's less than 12 hours away, so it can't be moved here. Message your coach if you need to." : "An invite was emailed to you too."}</p></section>`;
 }
 // Coach, Clients tab: who has booked this month.
@@ -808,7 +808,7 @@ function vCalls() {
   for (const s of slotsFor(month, cfg)) { const k = ymd(new Date(s.at)); if (!days.has(k)) days.set(k, []); days.get(k).push(s); }
   let out = `<div class="row"><button class="link" data-act="back">Back</button></div>
     <section class="hero"><div class="kicker">Check-in call</div><h1>${monthName(month)}</h1>
-    <p class="muted small">${isCoach() ? "Tap an open time to block it, or a blocked one to open it again. Tap a booked call to cancel it." : `30 minutes with ${esc(coachFirst())}. ${mine ? `You're booked for ${fmtCall(mine.starts_at)}; tap another time to move it.` : "Tap a time to book it. Faded times are taken."}`} ${tzNote(cfg)}</p></section>`;
+    <p class="muted small">${isCoach() ? "Tap an open time to block it, or a blocked one to open it again. Tap a booked call to cancel it." : `30 minutes with ${esc(coachFirst())}. ${mine ? `You're booked for ${fmtCall(mine.starts_at)}; tap another time to move it, or tap yours to cancel.` : "Tap a time to book it. Faded times are taken."}`} ${tzNote(cfg)}</p></section>`;
   if (isCoach()) out += callSettings(cfg, month);
   if (!ui.taken) return out + '<div class="empty">Loading times</div>';
   if (!cfg.on && !isCoach()) return out + '<div class="empty">Booking is closed for now.</div>';
@@ -824,7 +824,7 @@ function vCalls() {
         if (r) return `<button class="slot taken" data-act="call-unblock" data-id="${r.id}" aria-label="${t}, blocked. Open it again">${t}<span class="who">Blocked</span></button>`;
         return `<button class="slot${past ? " taken" : ""}" data-act="call-block" data-at="${s.at}"${past ? " disabled" : ""}>${t}</button>`;
       }
-      if (mine && iso(mine.starts_at) === s.at) return `<button class="slot mine" disabled>${t}<span class="who">Yours</span></button>`;
+      if (mine && iso(mine.starts_at) === s.at) return `<button class="slot mine" data-act="call-cancel" data-id="${mine.id}" aria-label="${t}, your call. Cancel it">${t}<span class="who">Yours</span></button>`;
       const off = past || ui.taken.has(s.at);
       return `<button class="slot${off ? " taken" : ""}" data-act="call-book" data-at="${s.at}"${off ? ` disabled aria-label="${t}, taken"` : ""}>${t}</button>`;
     }).join("")}</div></section>`;
@@ -1706,8 +1706,13 @@ document.addEventListener("click", async (ev) => {
     case "call-unblock": case "call-cancel": {
       const r = D.calls.find((c) => c.id === id);
       if (!r) return;
-      if (act === "call-cancel" && !confirm(`Cancel ${profile(r.client_id)?.name || "this athlete"}'s call on ${fmtCall(r.starts_at)}? They get an email saying so.`)) return;
-      try { await api.cancelCall(id); D.calls = D.calls.filter((c) => c !== r); ui.taken.delete(iso(r.starts_at)); render(); }
+      const own = r.client_id === me.id;
+      if (own && new Date(r.starts_at) - Date.now() < 12 * 36e5) return toast("It's less than 12 hours away, so it can't be cancelled here. Message your coach.");
+      if (act === "call-cancel" && !confirm(own ? `Cancel your check-in call on ${fmtCall(r.starts_at)}? You can book another time after.` : `Cancel ${profile(r.client_id)?.name || "this athlete"}'s call on ${fmtCall(r.starts_at)}? They get an email saying so.`)) return;
+      try {
+        await api.cancelCall(id); D.calls = D.calls.filter((c) => c !== r); ui.taken?.delete(iso(r.starts_at)); render();
+        if (own) toast("Cancelled. A cancellation is on its way to your email.");
+      }
       catch (err) { fail(err, "Cancelling"); }
       break;
     }
