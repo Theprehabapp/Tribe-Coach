@@ -405,3 +405,25 @@ body.coach .tabs button[aria-current="page"]::before { content: ""; position: ab
 /* Room below the grid for the last row's menu, without blocking clicks underneath. */
 .pgrid-wrap { padding-bottom: 220px; margin-bottom: -220px; pointer-events: none; }
 .pgrid { pointer-events: auto; }
+
+/* Month calendar for a team or an athlete: real dates, Monday first, wider than the page. Scrolls sideways on a phone. */
+.mc { width: min(1400px, calc(100vw - 32px)); position: relative; left: 50%; transform: translateX(-50%); display: grid; gap: 12px; }
+@media (min-width: 1100px) { .mc { width: min(1400px, calc(100vw - 128px)); } }
+.mc-scroll { overflow-x: auto; }
+.mc-grid { display: grid; grid-template-columns: repeat(7, minmax(120px, 1fr)); min-width: 860px; border-top: 1px solid var(--rule); border-left: 1px solid var(--rule); }
+.mc-dow { font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; padding: 8px; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); background: var(--surface-2); }
+.mc-cell { min-height: 110px; padding: 6px; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); display: grid; align-content: start; gap: 6px; min-width: 0; background: var(--surface); }
+.mc-cell.out { background: var(--bg); }
+.mc-cell.out .mc-date { opacity: .5; }
+.mc-date { font-size: 13px; font-weight: 700; color: var(--muted); justify-self: start; padding: 0 2px; }
+.mc-cell.today .mc-date { background: var(--fg); color: var(--bg); border-radius: 999px; padding: 0 8px; }
+.mc-card { display: grid; gap: 2px; text-align: left; background: var(--bg); border: 1px solid var(--rule); border-radius: 8px; padding: 6px 7px; cursor: pointer; min-width: 0; font-size: 12px; line-height: 1.3; color: var(--fg); }
+.mc-card:hover, .mc-card.on { border-color: var(--fg); }
+.mc-name { font-weight: 700; text-transform: uppercase; letter-spacing: .04em; overflow-wrap: anywhere; }
+.mc-x { display: flex; gap: 5px; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+.mc-lb { font-weight: 700; color: var(--fg); min-width: 18px; flex: none; }
+.mc-n, .mc-ok, .mc-miss { font-size: 11px; font-weight: 700; color: var(--muted); }
+.mc-n.some, .mc-ok { color: var(--green); }
+.mc-miss { color: var(--red); }
+.mc-split { align-items: start; }
+@media (max-width: 600px) { .mc-split { grid-template-columns: 1fr; } }
