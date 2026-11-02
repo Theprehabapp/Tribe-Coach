@@ -41,8 +41,8 @@ export function sessionDate(startYmd, week, dow) {
 
 // Per-set prescriptions. An exercise can carry rows [{reps, val}] plus a metric for the val column;
 // older exercises only have sets + reps + a free-text target, which still works everywhere.
-export const METRICS = ["", "kg", "% 1RM", "RPE", "Watts", "Seconds", "Metres", "Calories"];
-const UNIT = { kg: " kg", RPE: " RPE", Watts: " W", Seconds: " sec", Metres: " m", Calories: " cal" };
+export const METRICS = ["", "kg", "% 1RM", "RPE", "Watts", "Seconds", "Metres", "Calories", "Time", "Velocity", "Other"];
+const UNIT = { kg: " kg", RPE: " RPE", Watts: " W", Seconds: " sec", Metres: " m", Calories: " cal", Velocity: " m/s" };
 export function valText(val, metric) {
   const v = String(val ?? "").trim();
   if (!v || !metric) return v;
@@ -111,4 +111,45 @@ export function pctLoad(target, max) {
   const kg = (p) => Math.round((max * p) / 100 / 2.5) * 2.5;
   const lo = kg(+m[1]), hi = m[2] ? kg(+m[2]) : lo;
   return lo === hi ? `${lo} kg` : `${lo}-${hi} kg`;
+}
+
+// Program builder (TrainHeroic style): a block is a run of neighbouring exercises with the same letter.
+// Letters are never typed. Linking or unlinking two neighbours, reordering or deleting relabels A, B, C in order.
+const bkey = (e) => String(e.block || "").trim().toUpperCase();
+// [first, last] index of each block, in order. An exercise with no letter is a block of its own.
+export function groupsOf(exs) {
+  const out = [];
+  exs.forEach((e, i) => { const last = out[out.length - 1]; if (last && bkey(e) && bkey(e) === bkey(exs[last[1]])) last[1] = i; else out.push([i, i]); });
+  return out;
+}
+export function relabel(exs) {
+  groupsOf(exs).forEach(([a, b], gi) => { const L = String.fromCharCode(65 + Math.min(gi, 25)); for (let i = a; i <= b; i++) exs[i].block = L; });
+  return exs;
+}
+// Is exercise i joined to the one before it?
+export const linked = (exs, i) => i > 0 && !!bkey(exs[i]) && bkey(exs[i]) === bkey(exs[i - 1]);
+// The chain between i-1 and i: join their blocks, or split the block there.
+export function toggleLink(exs, i) {
+  if (!(i > 0 && i < exs.length)) return exs;
+  if (linked(exs, i)) { const k = bkey(exs[i]); for (let j = i; j < exs.length && bkey(exs[j]) === k; j++) exs[j].block = k + "'"; }
+  else { const k = bkey(exs[i - 1]) || "?" + i; exs[i - 1].block = k; const old = bkey(exs[i]); for (let j = i; j < exs.length && (j === i || (old && bkey(exs[j]) === old)); j++) exs[j].block = k; }
+  return relabel(exs);
+}
+
+// The one-line summary TrainHeroic shows on the builder bar, preview and calendar card:
+// "4 x 5 @ 70, 72.5, 72.5, 72.5%", "4 x 10 @ 7RPE", "3 x 10.10", "3 Sets".
+const SUFFIX = { kg: "kg", "% 1RM": "%", RPE: "RPE", Watts: "W", Seconds: "s", Metres: "m", Calories: "cal", Time: "", Velocity: "m/s", Other: "" };
+export function rxSummary(e) {
+  if (e.kind === "circuit") return "";
+  const rows = rowsOf(e), n = rows.length, t = (x) => String(x ?? "").trim();
+  const reps = rows.map((r) => t(r.reps)), vals = e.metric ? rows.map((r) => t(r.val).replace(/%$/, "")) : [];
+  const list = (a) => (new Set(a).size <= 1 ? a[0] : a.join(", "));
+  let out = reps.some(Boolean) ? `${n} x ${list(reps)}` : `${n} ${n === 1 ? "Set" : "Sets"}`;
+  if (vals.some(Boolean)) out += ` @ ${list(vals)}${SUFFIX[e.metric] ?? ""}`;
+  else if (!e.metric && t(e.target)) out += ` @ ${t(e.target)}`;
+  return out;
+}
+// Typing in a set row fills every row below it with the same value; rows above stay as they were.
+export function autofill(rows, r, field, value) {
+  return rows.map((row, i) => (i >= r ? { ...row, [field]: value } : row));
 }
