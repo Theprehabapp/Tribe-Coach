@@ -12,6 +12,7 @@ import {
   FEEDBACK_HOURS, DOW_LONG, W1_LINE, ymd, fmtDay, fmtLong, fmtTime,
   dueAt, timeLeft, weekOf, sessionDate, rxLine, bumpTarget, blockLabels, exKey, hasPct, pctLoad,
   daysBetween, parseYmd, addDays, METRICS, rowsOf, applyRows, parseVal, shortRx, bumpPct, DAY_ORDER, dayNum, valText,
+  groupsOf, relabel, linked, toggleLink, rxSummary, autofill,
 } from "./schedule.js";
 
 const STREAMS = ["Tribe Build", "Hypertrophy X", "TribeFit", "Aerobic Conditioning", "HYROX"];
@@ -70,7 +71,28 @@ const freshDay = (d) => ({ ...structuredClone(d), id: newId(), exercises: d.exer
 const freshWeek = (w) => ({ ...structuredClone(w), days: w.days.map(freshDay) });
 function clipBar() {
   const c = clip.get();
-  return c ? `<div class="clipbar row spread"><span class="small">Copied: <strong>${esc(c.label)}</strong>. ${{ week: "Paste it after any week, in this program or another.", session: "Paste it on any day with Paste, in this program or another.", block: "Open any session and tap Paste block." }[c.kind]}</span><button class="link small" data-act="clip-clear">Clear</button></div>` : "";
+  return c ? `<div class="clipbar row spread"><span class="small">Copied: <strong>${esc(c.label)}</strong>. ${{ week: "Paste it after any week, in this program or another.", session: "Paste it on any day with Paste, in this program or another.", sessions: "Hover a day and press Paste, or right-click it. Works in any program.", block: "Open any session and tap Paste block." }[c.kind]}</span><button class="link small" data-act="clip-clear">Clear</button></div>` : "";
+}
+// Copy sessions as a pattern: each keeps its week and day offset from the earliest one, so pasting lands them the same way.
+function copySessions(list) {
+  if (!list.length) return;
+  const col = (x) => DAY_ORDER.indexOf(x.day.dow), w0 = Math.min(...list.map((x) => x.w)), c0 = Math.min(...list.filter((x) => x.w === w0).map(col));
+  clip.set({ kind: "sessions", label: list.length === 1 ? `${list[0].day.name || "Session"} (week ${list[0].w + 1} day ${dayNum(list[0].day.dow)})` : `${list.length} sessions`,
+    data: list.map((x) => ({ dw: x.w - w0, dc: col(x) - c0, day: x.day })) });
+  render(); toast(`Copied ${list.length} session(s). Hover or right-click a day to paste.`);
+}
+// The sessions picked on the program calendar, earliest first.
+const selected = (p) => [...(ui.sel || [])].map((k) => { const [w, id] = k.split(":"); const day = p.weeks[+w]?.days.find((x) => x.id === id); return day && { w: +w, day }; })
+  .filter(Boolean).sort((a, b) => a.w - b.w || DAY_ORDER.indexOf(a.day.dow) - DAY_ORDER.indexOf(b.day.dow));
+// Move one step up or down. A block of one swaps with the neighbouring block; inside a superset it swaps with its neighbour, and at the edge it leaves the superset.
+function moveEx(exs, i, dir) {
+  const groups = groupsOf(exs), g = groups.findIndex(([a, z]) => i >= a && i <= z), [a, z] = groups[g];
+  if (a === z) {
+    const o = groups[g + dir]; if (!o) return;
+    const mine = exs.splice(a, 1)[0]; exs.splice(dir < 0 ? o[0] : o[1], 0, mine);
+  } else if ((dir < 0 && i > a) || (dir > 0 && i < z)) [exs[i], exs[i + dir]] = [exs[i + dir], exs[i]];
+  else { const x = exs.splice(i, 1)[0]; x.block = "~solo"; exs.splice(dir < 0 ? a : z, 0, x); }
+  relabel(exs);
 }
 const nextBlock = (exs) => { const last = exs.map((e) => String(e.block || "").trim().toUpperCase()).filter(Boolean).pop(); return last ? String.fromCharCode(Math.min(90, last.charCodeAt(0) + 1)) : "A"; };
 // Breakdown clips on a video, oldest first: one from before labels (review_path), then the labelled ones.
@@ -262,8 +284,9 @@ function render() {
   afterChatPaint();
   filterAth();
   hydrateBoards();
-  document.body.classList.toggle("wide", ["program", "session"].includes(ui.view) || (isCoach() && !ui.view && ui.tab === "clients"));
+  document.body.classList.toggle("wide", ["program", "session"].includes(ui.view) || (isCoach() && !ui.view && ["clients", "programs"].includes(ui.tab)));
   if (ui.view === "review") { openBreakdown(); paintCompare(); }
+  if (ui.focus) { const el = document.getElementById(ui.focus); ui.focus = null; if (el) { el.focus(); el.select?.(); } }
 }
 
 function lockup() {
@@ -507,104 +530,224 @@ async function addRef(file) {
 }
 
 /* ----- coach: programs ----- */
+/* ----- program builder, laid out like TrainHeroic's: program list, week x day calendar, session builder ----- */
+const initials = (s) => String(s || "").replace(/[^A-Za-z0-9 ]/g, " ").trim().split(/\s+/).filter(Boolean).slice(0, 3).map((w) => w[0]).join("").toUpperCase() || "P";
+const tile = (name) => `<span class="th-tile" aria-hidden="true">${esc(initials(name))}</span>`;
+const BICON = {
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
+  up: '<path d="m6 15 6-6 6 6"/>', down: '<path d="m6 9 6 6 6-6"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  pencil: '<path d="M4 20h4L19 9l-4-4L4 16z"/>', repeat: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>', paste: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
+};
+const ico = (k) => svg(BICON[k]);
+// Block categories, as TrainHeroic names them. The category is also the block's title until the coach types one.
+const CATS = ["Uncategorized", "Prep", "Speed/Agility", "Skill/Tech", "Strength/Power", "Conditioning", "Recovery"];
+// What a block is scored in. Stored as the "(FOR X)" tag the athlete app already reads; Rounds + reps is ours, TrainHeroic can't score it.
+const RESULTS = [["", "-"], ["(FOR TIME)", "Time"], ["(FOR ROUNDS + REPS)", "Rounds + reps"], ["(FOR ROUNDS)", "Rounds"], ["(FOR REPS)", "Reps"], ["(FOR CALORIES)", "Calories"],
+  ["(FOR METRES)", "Metres"], ["(FOR WATTS)", "Watts"], ["(FOR LOAD)", "Weight"], ["(FOR SECONDS)", "Seconds"]];
+const resultSelect = (e, attrs, label) => {
+  const cur = String(e.score || ""), known = RESULTS.some(([v]) => v === cur);
+  return `<select class="t mini th-res" data-change="score" ${attrs} aria-label="${label}">${known ? "" : `<option value="${esc(cur)}" selected>${esc(cur.replace(/[()]/g, ""))}</option>`}${RESULTS.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${l}</option>`).join("")}</select>`;
+};
+// The set table's measure column, labelled the way TrainHeroic labels it.
+const MEASURE = { "": "Optional", kg: "Weight (kg)", "% 1RM": "Weight (%)", RPE: "RPE", Watts: "Watts", Seconds: "Seconds (s)", Metres: "Distance (meters)", Calories: "Calories (cal)", Time: "Time (min:sec)", Velocity: "Velocity (m/s)", Other: "Other Number" };
+const tagOf = (e) => String(e.score || "").replace(/[()]/g, "").trim();
+const isCircuit = (e) => e.kind === "circuit";
+
 function vPrograms() {
-  let out = `<section class="hero"><div class="kicker">Library</div><h1>Programs</h1><p class="muted small">Build a block once, then assign it to any client. Prescriptions follow your notation: sets x reps @ target (cue).</p></section>
-    <div class="row"><button class="btn primary" data-act="new-program">New program</button>${libraryPrograms().length ? "" : '<button class="btn" data-act="example-program">Start from an example block</button>'}${D.progReady ? `<button class="btn" data-act="open-exlib">Exercise library (${D.exercises.length})</button>` : ""}</div><div class="list">`;
-  for (const p of libraryPrograms()) {
-    const n = clients().filter((c) => planFor(c).p?.id === p.id).length;
-    const sessions = p.weeks.reduce((a, w) => a + w.days.length, 0);
-    out += `<button class="item" data-act="open-program" data-id="${p.id}"><h3>${esc(p.name)}</h3><p class="small muted num">${p.weeks.length} weeks, ${sessions} sessions, ${n} client${n === 1 ? "" : "s"}</p>${p.note ? `<p class="small">${esc(p.note)}</p>` : ""}</button>`;
-  }
-  return out + "</div>";
+  const rows = libraryPrograms().map((p) => {
+    const n = clients().filter((c) => planFor(c).p?.id === p.id).length, sessions = p.weeks.reduce((a, w) => a + w.days.length, 0);
+    return `<tr><td><button class="th-title" data-act="open-program" data-id="${p.id}">${tile(p.name)}<span>${esc(p.name)}</span></button></td>
+      <td class="num">${p.weeks.length}</td><td class="num">${sessions}</td><td class="num">${n}</td><td class="small muted th-desc">${esc(p.note || "")}</td></tr>`;
+  }).join("");
+  return `<div class="th-libhead"><h1>Programs</h1><span class="row">${D.progReady ? `<button class="btn" data-act="open-exlib">Exercises (${D.exercises.length})</button>` : ""}${libraryPrograms().length ? "" : '<button class="btn" data-act="example-program">Start from an example block</button>'}<button class="btn primary" data-act="new-program">Create Program</button></span></div>
+    ${rows ? `<div class="th-tablewrap"><table class="th-table"><thead><tr><th>Title</th><th>Weeks</th><th>Sessions</th><th>Athletes</th><th>Description</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty">No programs yet. Create one to start building.</div>'}
+    ${ui.newProg ? newProgramModal() : ""}`;
 }
-// The program as a grid: weeks down the page, Day 1 to Day 7 across, each session a card.
+function newProgramModal() {
+  const n = ui.newProg;
+  return `<div class="th-scrim"><div class="th-modal" role="dialog" aria-modal="true" aria-labelledby="np-h"><h2 id="np-h">Create Program</h2>
+    <label class="f">Program Name<input class="t" id="np-name" maxlength="75" data-input="np" placeholder="Ex: Hypertrophy Block 1" value="${esc(n.name)}"><span class="count num" id="np-count">${n.name.length}/75</span></label>
+    <label class="f">Number of Weeks in Program<input class="t num" id="np-weeks" type="number" min="1" max="52" inputmode="numeric" data-input="np" value="${esc(n.weeks)}"></label>
+    <div class="row th-modal-foot"><button class="link" data-act="np-cancel">Cancel</button><button class="btn primary" data-act="np-create" id="np-go"${n.name.trim() && +n.weeks >= 1 ? "" : " disabled"}>Create Program</button></div></div></div>`;
+}
+
+// Calendar card: tile, name, kebab, then each item as a letter circle, name and summary. Linked items share a line.
 function sessCard(wi, day, current) {
-  const labels = blockLabels(day.exercises), at = `data-w="${wi}" data-id="${day.id}"`;
-  // A block's result tag (FOR TIME, FOR REPS...) goes under its last exercise, once per block.
-  const tag = (e, i) => { const sc = String(e.score || "").replace(/[()]/g, "").trim(), nx = day.exercises[i + 1];
-    return sc && !(nx && nx.block && nx.block === e.block && nx.score === e.score) ? `<span class="trophy">${TROPHY}${esc(sc)}</span>` : ""; };
-  return `<div class="sess-box"><button class="sess${current ? " on" : ""}" data-act="open-sess" ${at}><span class="sess-name">${esc(day.name || "Session")}</span>
-    ${day.exercises.map((e, i) => `<span class="sx${/\d$/.test(labels[i] || "") ? " ss" : ""}"><span class="lb">${labels[i] || ""}</span><span class="sx-t"><span>${esc(e.name || "New exercise")}</span><span class="muted small num">${esc(shortRx(e))}</span>${tag(e, i)}</span></span>`).join("")}
-    ${day.exercises.length ? "" : '<span class="muted small">No exercises yet</span>'}</button>
+  const labels = blockLabels(day.exercises), at = `data-w="${wi}" data-id="${day.id}"`, picked = ui.sel?.has(`${wi}:${day.id}`);
+  const items = day.exercises.map((e, i) => {
+    const head = ui.showTitles && (i === 0 || !linked(day.exercises, i)) ? `<span class="sx-head">${esc(e.section || e.cat || "")}</span>` : "";
+    const tag = isCircuit(e) || (tagOf(e) && !(day.exercises[i + 1] && linked(day.exercises, i + 1))) ? (tagOf(e) ? `<span class="trophy">${TROPHY}${esc(tagOf(e))}</span>` : "") : "";
+    const ins = ui.showIns && e.note ? `<span class="sx-ins">${esc(e.note)}</span>` : "";
+    return `${head}<span class="sx${linked(day.exercises, i) ? " ss" : ""}"><span class="lb">${labels[i] || ""}</span><span class="sx-t"><span>${esc(e.name || (isCircuit(e) ? "Circuit" : "New exercise"))}</span>${rxSummary(e) ? `<span class="small num">${esc(rxSummary(e))}</span>` : ""}${tag}${ins}</span></span>`;
+  }).join("");
+  return `<div class="sess-box${picked ? " picked" : ""}" draggable="true" data-w="${wi}" data-id="${day.id}"><button class="sess${current ? " on" : ""}" data-act="open-sess" ${at}><span class="sess-top">${tile(day.name)}<span class="sess-name">${esc(day.name || "Session")}</span></span>
+    ${ui.showIns && day.coachNote ? `<span class="sx-ins">${esc(day.coachNote)}</span>` : ""}${items}${day.exercises.length ? "" : '<span class="muted small">No blocks yet</span>'}</button>
     <details class="kebab"><summary aria-label="Options for ${esc(day.name || "session")}">&#8942;</summary><div class="kmenu">
-      <button data-act="open-sess" ${at}>Edit</button><button data-act="card-copy" ${at}>Copy</button><button data-act="card-dup" ${at}>Duplicate here</button>
-      <button data-act="card-repeat" ${at}>Repeat in later weeks</button><button class="danger" data-act="card-del" ${at}>Delete</button></div></details></div>`;
+      <button data-act="open-sess" ${at}>Edit</button><button data-act="card-repeat" ${at}>Repeat</button><button data-act="card-copy" ${at}>Copy</button><button class="danger" data-act="card-del" ${at}>Delete</button></div></details></div>`;
 }
 const TROPHY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3M12 14v4M8 21h8M9 18h6"/></svg>';
+const clipSessions = () => { const c = clip.get(); return c?.kind === "sessions" ? c.data : c?.kind === "session" ? [{ dw: 0, dc: 0, day: c.data }] : null; };
 function vProgramEdit() {
   const p = program(ui.programId);
   if (!p) { ui.view = null; return vPrograms(); }
   if (!p.weeks.length) p.weeks.push({ days: [] });
-  const cb = clip.get();
-  let out = `${clipBar()}<div class="row"><button class="link" data-act="back">${p.owner_id ? "Back to athlete" : "Back to programs"}</button><span class="small muted" id="save-state"></span></div>
-    <section class="stack"><div class="kicker">${p.owner_id ? `Program just for ${esc(profile(p.owner_id)?.name || "one athlete")}` : "Program"}</div>
-    <div class="grid2"><label class="f">Name<input class="t" id="p-name" data-input="p-name" value="${esc(p.name)}"></label>
-    <label class="f">Description<input class="t" id="p-note" data-input="p-note" value="${esc(p.note)}"></label></div>
-    <p class="small muted">${p.weeks.length} week${p.weeks.length === 1 ? "" : "s"}. Tap a session to edit it, or + to add one on that day. Day 1 is Monday.</p></section>
-    <div class="pgrid-wrap"><div class="pgrid">${DAY_ORDER.map((dow) => `<div class="pg-head">Day ${dayNum(dow)} <span class="muted">${DOW_LONG[dow].slice(0, 3)}</span></div>`).join("")}`;
+  const cs = clipSessions(), cw = clip.get()?.kind === "week";
+  let out = `${clipBar()}<div class="row spread"><button class="link" data-act="back">${p.owner_id ? "Back to athlete" : "Back to programs"}</button><span class="save-pill" id="save-state">${ui.saveState || "Saved"}</span></div>
+    ${p.owner_id ? `<div class="kicker">Program just for ${esc(profile(p.owner_id)?.name || "one athlete")}</div>` : ""}
+    <div class="th-sub"><span class="row">${tile(p.name)}<strong class="th-pname">${esc(p.name)}</strong><span class="muted">${p.weeks.length} Week Program</span></span>
+      <span class="row th-icons"><span class="th-pop"><button class="th-ib" data-act="pv-opts" aria-label="View options" aria-expanded="${!!ui.pvOpts}">${ico("eye")}</button>${ui.pvOpts ? `<div class="kmenu th-menu"><button data-act="pv-ins">${ui.showIns ? "Hide" : "Show"} Instructions</button><button data-act="pv-titles">${ui.showTitles ? "Hide" : "Show"} Block Titles</button></div>` : ""}</span>
+      <button class="th-ib" data-act="p-settings" aria-label="Program settings" aria-expanded="${!!ui.pSettings}">${ico("gear")}</button></span></div>
+    ${ui.pSettings ? `<section class="card stack"><div class="grid2"><label class="f">Program Name<input class="t" id="p-name" maxlength="75" data-input="p-name" value="${esc(p.name)}"></label>
+      <label class="f">Description<input class="t" id="p-note" data-input="p-note" value="${esc(p.note)}"></label></div>
+      <div class="row"><button class="btn small" data-act="add-week">Add a week</button>${ui.confirmDelProgram ? '<span>Delete this program? Clients on it lose their sessions.</span><button class="btn small primary" data-act="del-program-yes">Delete</button><button class="btn small" data-act="del-program-no">Keep it</button>' : '<button class="btn small danger" data-act="del-program">Delete program</button>'}</div></section>` : ""}
+    <div class="pgrid-wrap"><div class="pgrid" id="pgrid">${DAY_ORDER.map((dow) => `<div class="pg-head">Day ${dayNum(dow)} <span class="muted">${DOW_LONG[dow].slice(0, 3)}</span></div>`).join("")}`;
   p.weeks.forEach((w, wi) => {
-    out += `<div class="pg-week"><h2>Week ${wi + 1}</h2><span class="row"><button class="btn small" data-act="dup-week" data-w="${wi}">Copy to new week</button><button class="btn small" data-act="clip-week" data-w="${wi}">Copy week</button>${cb?.kind === "week" ? `<button class="btn small primary" data-act="paste-week" data-w="${wi}">Paste after</button>` : ""}${p.weeks.length > 1 ? `<button class="btn small danger" data-act="del-week" data-w="${wi}">Delete</button>` : ""}</span></div>`;
-    out += DAY_ORDER.map((dow) => `<div class="pg-cell">${w.days.filter((d) => d.dow === dow).map((d) => sessCard(wi, d)).join("")}
-      <button class="pg-add" data-act="sess-add" data-w="${wi}" data-dow="${dow}" aria-label="Add a session to week ${wi + 1} day ${dayNum(dow)}">+</button>${cb?.kind === "session" ? `<button class="pg-add paste" data-act="paste-sess" data-w="${wi}" data-dow="${dow}" aria-label="Paste ${esc(cb.label)} into week ${wi + 1} day ${dayNum(dow)}">Paste</button>` : ""}</div>`).join("");
+    out += `<div class="pg-week"><h2>Week ${wi + 1}</h2><span class="pg-wk-acts"><button class="link small" data-act="clip-week" data-w="${wi}">Copy week</button>${cw ? `<button class="link small" data-act="paste-week" data-w="${wi}">Paste week after</button>` : ""}<button class="link small" data-act="dup-week" data-w="${wi}">Copy to new week</button>${p.weeks.length > 1 ? `<button class="link small danger" data-act="del-week" data-w="${wi}">Delete week</button>` : ""}</span></div>`;
+    out += DAY_ORDER.map((dow) => { const here = w.days.filter((d) => d.dow === dow);
+      return `<div class="pg-cell${here.length ? "" : " empty-day"}" data-w="${wi}" data-dow="${dow}">${here.map((d) => sessCard(wi, d)).join("")}
+      <span class="pg-hover">${here.length ? `<button data-act="open-sess" data-w="${wi}" data-id="${here[0].id}">Edit</button><button data-act="sess-add" data-w="${wi}" data-dow="${dow}">Add session</button>` : `<button data-act="sess-add" data-w="${wi}" data-dow="${dow}" aria-label="Create session, week ${wi + 1} day ${dayNum(dow)}">Create session</button>`}${cs ? `<button data-act="paste-sess" data-w="${wi}" data-dow="${dow}">Paste ${cs.length} session${cs.length === 1 ? "" : "s"}</button>` : ""}</span></div>`; }).join("");
   });
-  out += `</div></div>
-    <div class="row"><button class="btn" data-act="add-week">Add a blank week</button>${cb?.kind === "week" ? `<button class="btn primary" data-act="paste-week" data-w="${p.weeks.length - 1}">Paste ${esc(cb.label)} at the end</button>` : ""}</div>
-    <div class="row">${ui.confirmDelProgram ? '<span>Delete this program? Clients on it lose their sessions.</span><button class="btn small primary" data-act="del-program-yes">Delete</button><button class="btn small" data-act="del-program-no">Keep it</button>' : '<button class="btn small danger" data-act="del-program">Delete program</button>'}</div>`;
+  out += `</div></div><div class="row"><button class="btn" data-act="add-week">Add a week</button>${cw ? `<button class="btn" data-act="paste-week" data-w="${p.weeks.length - 1}">Paste ${esc(clip.get().label)} at the end</button>` : ""}</div>
+    <p class="small muted">Drag a session to move it. Drag a box around sessions to repeat, copy or delete them. Right-click a day to copy or paste.</p>`;
+  if (ui.sel?.size) out += `<div class="th-selbar" role="toolbar" aria-label="Selected sessions"><button data-act="sel-clear">${ico("x")} Back</button><span>${ui.sel.size} Session${ui.sel.size === 1 ? "" : "s"} Selected</span><span class="row"><button data-act="sel-repeat">${ico("repeat")} Repeat</button><button data-act="sel-copy">${ico("copy")} Copy</button><button data-act="sel-del">${ico("trash")} Delete</button></span></div>`;
+  if (ui.ctx) {
+    const k = ui.ctx, n = p.weeks[k.w]?.days.filter((d) => d.dow === k.dow).length || 0;
+    out += `<div class="kmenu th-ctx" style="left:${k.x}px;top:${k.y}px"><button data-act="ctx-copy"${n ? "" : " disabled"}>Copy ${n} Session${n === 1 ? "" : "s"}</button><button data-act="paste-sess" data-w="${k.w}" data-dow="${k.dow}"${cs ? "" : " disabled"}>Paste ${cs?.length || 0} Session${cs?.length === 1 ? "" : "s"}</button><button class="danger" data-act="ctx-del"${n ? "" : " disabled"}>Delete ${n} Session${n === 1 ? "" : "s"}</button></div>`;
+  }
+  if (ui.repeat) out += repeatModal(p);
   return out;
 }
+// Repeat: one session through a later week on chosen days, or a selection forward N times.
+function repeatModal(p) {
+  const r = ui.repeat;
+  if (r.one) {
+    const { w, day } = r.one;
+    return `<div class="th-scrim"><div class="th-modal" role="dialog" aria-modal="true" aria-labelledby="rp-h"><h2 id="rp-h">Repeat 1 Session</h2>
+      <label class="f">Repeat through<select class="t" id="rp-through">${p.weeks.map((_, i) => i >= w ? `<option value="${i}"${i === p.weeks.length - 1 ? " selected" : ""}>End of Week ${i + 1}</option>` : "").join("")}</select></label>
+      <fieldset class="th-days"><legend class="small muted">Days</legend>${DAY_ORDER.map((dow) => `<label><input type="checkbox" data-rp-day="${dow}"${dow === day.dow ? " checked" : ""}> Day ${dayNum(dow)}</label>`).join("")}</fieldset>
+      <div class="row th-modal-foot"><button class="link" data-act="rp-cancel">Cancel</button><button class="btn primary" data-act="rp-apply">Apply Changes</button></div></div></div>`;
+  }
+  const { items, span, maxW } = r, max = Math.floor((p.weeks.length - 1 - maxW) / span);
+  const busy = (k) => items.filter((it) => p.weeks[it.w + k * span]?.days.some((d) => d.dow === it.day.dow)).length;
+  const taken = Array.from({ length: max }, (_, i) => busy(i + 1)).reduce((a, b) => a + b, 0);
+  return `<div class="th-scrim"><div class="th-modal" role="dialog" aria-modal="true" aria-labelledby="rp-h"><h2 id="rp-h">Repeat ${items.length} Session${items.length === 1 ? "" : "s"}</h2>
+    ${max ? `<label class="f">Repeat<select class="t" id="rp-times">${Array.from({ length: max }, (_, i) => `<option value="${i + 1}"${i + 1 === max ? " selected" : ""}>${i + 1} Time${i ? "s" : ""}</option>`).join("")}</select></label>
+    <p class="small muted">Copies ${span === 1 ? "this week's pattern" : `this ${span}-week pattern`} into the following weeks.${taken ? ` Some of those days already have a session; the copies go alongside them.` : ""}</p>` : '<p class="small">There are no later weeks to repeat into. Add a week first.</p>'}
+    <div class="row th-modal-foot"><button class="link" data-act="rp-cancel">Cancel</button><button class="btn primary" data-act="rp-apply"${max ? "" : " disabled"}>Apply Changes</button></div></div></div>`;
+}
 
-// One session: the program's days on the left as a calendar, the session itself on the right.
+// Session builder: mini calendar and a live preview on the left, the session on the right.
+function previewOf(day, current) {
+  const labels = blockLabels(day.exercises);
+  return `<div class="pv${current ? " on" : ""}"><button class="pv-head" data-act="open-sess" data-w="${ui.sess.w}" data-id="${day.id}">${tile(day.name)}<span>${esc(day.name || "Session")}</span></button>
+    ${day.exercises.map((e, i) => `<span class="sx${linked(day.exercises, i) ? " ss" : ""}"><span class="lb">${labels[i] || ""}</span><span class="sx-t"><span>${esc(e.name || (isCircuit(e) ? "Circuit" : e.section || e.cat || "Strength/Power"))}</span><span class="small num" id="pv-${e.id}">${esc(rxSummary(e))}</span></span></span>`).join("")}</div>`;
+}
 function vSession() {
   const p = program(ui.programId), s = ui.sess;
   if (!p || !s || !p.weeks[s.w]) { ui.view = p ? "program" : null; return p ? vProgramEdit() : vPrograms(); }
   const wk = p.weeks[s.w], day = wk.days.find((d) => d.id === s.id), dow = day ? day.dow : s.dow, di = wk.days.indexOf(day);
-  const sameDay = wk.days.filter((d) => d.dow === dow), cb = clip.get();
+  const sameDay = wk.days.filter((d) => d.dow === dow), cs = clipSessions(), cb = clip.get();
   const cal = p.weeks.map((w, wi) => `<div class="cal-wk"><span class="kicker">Week ${wi + 1}</span><div class="cal-row">${DAY_ORDER.map((dd) => {
     const n = w.days.filter((d) => d.dow === dd).length;
     return `<button class="cal-d num" data-act="sess-day" data-w="${wi}" data-dow="${dd}"${wi === s.w && dd === dow ? ' aria-current="true"' : ""} aria-label="Week ${wi + 1} day ${dayNum(dd)}, ${n} session${n === 1 ? "" : "s"}">${wi * 7 + dayNum(dd)}<span class="dots">${"&bull;".repeat(Math.min(n, 3))}</span></button>`; }).join("")}</div></div>`).join("");
   let out = `<div class="sess-layout"><aside class="sess-side"><div class="cal">${cal}</div>
-    <div class="stack"><h2>Day ${s.w * 7 + dayNum(dow)}</h2>${sameDay.map((d) => sessCard(s.w, d, d === day)).join("")}
-    <button class="btn small" data-act="sess-add" data-w="${s.w}" data-dow="${dow}">Add ${sameDay.length ? "another" : "a"} session</button>
-    ${cb?.kind === "session" ? `<button class="btn small primary" data-act="paste-sess" data-w="${s.w}" data-dow="${dow}">Paste ${esc(cb.label)} here</button>` : ""}</div></aside><div class="sess-main stack">${clipBar()}
-    <div class="row spread"><button class="link" data-act="back">${ui.calBack ? "Back to calendar" : "Back to program"}</button><span class="small muted" id="save-state"></span></div>
-    <h1>Week ${s.w + 1} Day ${dayNum(dow)}</h1>`;
-  if (!day) return out + `<div class="empty">No session on this day.</div></div></div>`;
-  out += `<section class="stack"><div class="grid2"><label class="f">Session<input class="t" list="streams" id="d-name-${day.id}" data-input="d-name" data-d="${di}" value="${esc(day.name)}"></label>
-    <label class="f">Day<select class="t" id="d-dow-${day.id}" data-change="d-dow" data-d="${di}">${DAY_ORDER.map((n) => `<option value="${n}"${day.dow === n ? " selected" : ""}>Day ${dayNum(n)} (${DOW_LONG[n]})</option>`).join("")}</select></label></div>
-    <label class="f">Coach instructions<textarea class="t tall" id="d-note-${day.id}" data-input="d-note" data-d="${di}" placeholder="Framing for the session: what to chase, what to log.">${esc(day.coachNote)}</textarea></label></section>`;
-  const labels = blockLabels(day.exercises);
-  day.exercises.forEach((e, ei) => { out += exBlock(e, di, ei, labels[ei]); });
-  out += `<div class="row"><button class="btn" data-act="ex-add" data-d="${di}">Add exercise</button>${cb?.kind === "block" ? `<button class="btn primary" data-act="paste-block" data-d="${di}">Paste ${esc(cb.label)}</button>` : ""}</div>
-    <p class="small muted">Block: give exercises the same letter to superset them (A1, A2). Pick a column (kg, % 1RM, RPE, watts...) to set a target per set. Exercise names come from your exercise library.</p>
-    <div class="row"><button class="btn small" data-act="sess-dup" data-d="${di}">Duplicate session</button><button class="btn small" data-act="clip-sess" data-d="${di}">Copy session</button><button class="btn small danger" data-act="sess-del" data-d="${di}">Delete session</button></div>
-    <datalist id="streams">${STREAMS.map((x) => `<option value="${x}">`).join("")}</datalist>
-    <datalist id="ex-lib">${D.exercises.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist></div></div>`;
+    <div class="stack"><h2>Session Preview</h2><span class="kicker">Day ${s.w * 7 + dayNum(dow)}</span>${sameDay.map((d) => previewOf(d, d === day)).join("") || '<p class="small muted">Rest day</p>'}</div></aside>
+    <div class="sess-main stack">${clipBar()}
+    <div class="row spread"><button class="link" data-act="back">${ui.calBack ? "Back to calendar" : "Back To Program"}</button><span class="save-pill" id="save-state">${ui.saveState || "Saved"}</span></div>
+    <div class="row spread th-h1"><h1>Week ${s.w + 1} Day ${dayNum(dow)}</h1>${day ? `<span class="row"><button class="th-ib" data-act="clip-sess" data-d="${di}" aria-label="Copy session" title="Copy session">${ico("copy")}</button><button class="th-ib" data-act="sess-del" data-d="${di}" aria-label="Delete session" title="Delete session">${ico("trash")}</button></span>` : ""}</div>`;
+  const addSess = `<button class="btn th-big" data-act="sess-add" data-w="${s.w}" data-dow="${dow}">Add New Session</button>${cs ? `<button class="btn th-big" data-act="paste-sess" data-w="${s.w}" data-dow="${dow}">Paste ${cs.length} session${cs.length === 1 ? "" : "s"}</button>` : ""}`;
+  if (!day) return out + `<div class="empty stack"><strong>Scheduled Rest Day</strong><div class="row th-adds">${addSess}</div></div></div></div>`;
+  if (sameDay.length > 1) out += `<div class="seg" role="group" aria-label="Sessions on this day">${sameDay.map((d) => `<button data-act="open-sess" data-w="${s.w}" data-id="${d.id}" aria-pressed="${d === day}">${esc(d.name || "Session")}</button>`).join("")}</div>`;
+  out += `<label class="th-name">${tile(day.name)}<input class="th-sname" id="d-name-${day.id}" list="streams" data-input="d-name" data-d="${di}" value="${esc(day.name)}" placeholder="Week ${s.w + 1} Day ${dayNum(dow)}" aria-label="Session name"><span class="th-pen">${ico("pencil")}</span></label>
+    <section class="th-card"><div class="row spread"><strong>Coach Instructions</strong><span class="count num" id="cnt-d-${day.id}">${(day.coachNote || "").length}/10000</span></div>
+      <textarea class="th-ta" id="d-note-${day.id}" maxlength="10000" data-input="d-note" data-d="${di}" data-count="cnt-d-${day.id}" placeholder="Use this area to help the athlete understand goals for today's session.">${esc(day.coachNote)}</textarea></section>`;
+  const exs = day.exercises, labels = blockLabels(exs);
+  groupsOf(exs).forEach(([a, b]) => {
+    out += `<section class="th-block">${blockHead(exs[a], di, a)}`;
+    for (let i = a; i <= b; i++) out += (i > a ? chain(di, i, true) : "") + exRow(exs[i], di, i, labels[i], i === a, i === b, exs.length);
+    out += `</section>${b < exs.length - 1 ? chain(di, b + 1, false) : ""}`;
+  });
+  out += `<div class="th-adds"><button class="btn primary th-big" data-act="ex-add" data-d="${di}" title="Blocks are the building blocks of your session. They hold an exercise or a circuit; link blocks to make supersets.">Add Block</button>${cb?.kind === "block" ? `<button class="btn th-big" data-act="paste-block" data-d="${di}">Paste ${esc(cb.label)}</button>` : ""}<hr>${addSess}</div>
+    <datalist id="streams">${STREAMS.map((x) => `<option value="${x}">`).join("")}</datalist></div></div>`;
   return out;
 }
-function exBlock(e, di, ei, label) {
-  const rows = rowsOf(e), on = !!e.metric, attrs = `data-d="${di}" data-e="${ei}"`;
-  return `<section class="exb"><div class="exb-lb" id="blk-${e.id}">${label || ""}</div><div class="stack">
-    <div class="exb-top">${fld("Exercise", "name", e, di, ei, "wide")}${fld("Block", "block", e, di, ei, "blkf", "text", "A")}
-      <span class="row"><button class="btn small ghost" data-act="clip-block" ${attrs}>Copy block</button><button class="btn small ghost" data-act="ex-up" ${attrs}${ei ? "" : " disabled"}>Up</button><button class="btn small danger" data-act="ex-del" ${attrs}>Remove</button></span></div>
-    <p class="rx" id="rx-${e.id}">${esc(rxLine(e))}</p>
-    <div class="exb-grid"><div class="stack">
-      <label class="f">Exercise instructions<textarea class="t" id="x-note-${e.id}" data-input="ex" data-k="note" ${attrs} placeholder="Warm up, tempo, what to log.">${esc(e.note)}</textarea></label>
-      <div class="grid2">${fld("Cue (in brackets)", "cue", e, di, ei)}${fld("Rest", "rest", e, di, ei, "", "text", "Rest 3-4 minutes between sets")}</div>
-      <div class="grid2">${fld("Block heading", "section", e, di, ei, "", "text", "STRENGTH/POWER or EMOM X 12 MINUTES")}${fld("Scoring", "score", e, di, ei, "", "text", "(FOR REPS) or (TEST) (FOR WATTS)")}</div></div>
-    <div class="stack"><table class="sets"><thead><tr><th class="num">${rows.length} sets</th><th>Reps</th><th><select class="t mini" id="x-metric-${e.id}" data-change="metric" ${attrs} aria-label="Target per set">${METRICS.map((m) => `<option value="${m}"${(e.metric || "") === m ? " selected" : ""}>${m || "No column"}</option>`).join("")}</select></th><th></th></tr></thead>
+function blockHead(e, di, ei) {
+  const attrs = `data-d="${di}" data-e="${ei}"`, cat = e.cat || (isCircuit(e) ? "Conditioning" : "Strength/Power");
+  return `<div class="blk-head"><select class="t mini th-cat" data-change="cat" ${attrs} aria-label="Block category" title="Change Block Category">${CATS.map((c) => `<option${c === cat ? " selected" : ""}>${c}</option>`).join("")}</select>
+    <input class="blk-title" id="x-section-${e.id}" data-input="ex" data-k="section" ${attrs} value="${esc(e.section)}" placeholder="Block title" aria-label="Block title" title="Change Block Title">
+    <span class="row">${isCircuit(e) ? "" : `<span class="th-lb" title="Score this block">${TROPHY}${resultSelect(e, attrs, "Block result")}</span>`}
+    <details class="kebab"><summary aria-label="Block options">&#8943;</summary><div class="kmenu"><button data-act="clip-block" ${attrs}>Copy block</button><button class="danger" data-act="blk-del" ${attrs}>Delete block</button></div></details></span></div>`;
+}
+const chain = (di, i, on) => `<div class="th-chain${on ? " on" : ""}"><button data-act="link" data-d="${di}" data-e="${i}" aria-label="${on ? "Remove superset" : "Create superset"}" title="${on ? "Remove superset" : "Create superset"}">${ico("link")}</button></div>`;
+function exRow(e, di, ei, label, first, last, n) {
+  const attrs = `data-d="${di}" data-e="${ei}"`, circ = isCircuit(e);
+  const gut = `<div class="th-gut"><button class="th-ib" data-act="ex-del" ${attrs} aria-label="Delete ${esc(e.name || "exercise")}">${ico("trash")}</button>
+    ${ei ? `<button class="th-ib" data-act="ex-up" ${attrs} aria-label="Move up" title="Move Exercise Up">${ico("up")}</button>` : ""}${ei < n - 1 ? `<button class="th-ib" data-act="ex-down" ${attrs} aria-label="Move down" title="Move Exercise Down">${ico("down")}</button>` : ""}</div>`;
+  const pick = `<div class="xpick"><input class="t xname" id="x-name-${e.id}" data-input="ex" data-k="name" data-pick="1" ${attrs} value="${esc(e.name)}" placeholder="${circ ? "Circuit" : "Select Exercise or Circuit"}" autocomplete="off" role="combobox" aria-expanded="false" aria-label="${circ ? "Circuit name" : "Exercise"}"><div class="xlist" hidden></div></div>`;
+  const count = (k, max = 10000) => `<span class="count num" id="cnt-${k}-${e.id}">${(e[k] || "").length}/${max}</span>`;
+  let left, right;
+  if (circ) {
+    left = `${pick}<section class="th-card grey"><div class="row spread"><strong>Circuit Details</strong>${count("note")}</div>
+      <textarea class="th-ta" id="x-note-${e.id}" maxlength="10000" data-input="ex" data-k="note" data-count="cnt-note-${e.id}" ${attrs} placeholder="EX.&#10;3 Rounds for Time&#10;400m Run&#10;21 Kettlebell Swings 24/16kg">${esc(e.note)}</textarea></section>`;
+    right = `<label class="f">Results${resultSelect(e, attrs, "Circuit result")}</label>`;
+  } else {
+    const rows = rowsOf(e);
+    left = `${pick}<section class="th-card"><div class="row spread"><strong>Exercise Instructions</strong>${count("note")}</div>
+      <textarea class="th-ta" id="x-note-${e.id}" maxlength="10000" data-input="ex" data-k="note" data-count="cnt-note-${e.id}" ${attrs} placeholder="Add cues for this session.">${esc(e.note)}</textarea></section>
+      <div class="grid3 th-extra">${fld("Tempo", "tempo", e, di, ei, "", "text", "3-0-1-0")}${fld("Rest", "rest", e, di, ei, "", "text", "Rest 2 min")}${fld("Cue (in brackets)", "cue", e, di, ei, "", "text", "full depth")}</div>`;
+    right = `<div class="th-rx" id="rx-${e.id}">${esc(rxSummary(e))}</div>
+      <table class="sets th"><thead><tr><th class="num">${rows.length} Sets</th><th>Reps</th><th><select class="t mini" id="x-metric-${e.id}" data-change="metric" ${attrs} aria-label="Second column">${METRICS.map((m) => `<option value="${m}"${(e.metric || "") === m ? " selected" : ""}>${MEASURE[m] || m}</option>`).join("")}</select></th></tr></thead>
       <tbody>${rows.map((r, ri) => `<tr><td class="num muted">${ri + 1}</td><td><input class="t num" id="r-${e.id}-${ri}-reps" data-input="row" data-f="reps" data-r="${ri}" ${attrs} value="${esc(r.reps)}" aria-label="Set ${ri + 1} reps"></td>
-        <td>${on ? `<input class="t num" id="r-${e.id}-${ri}-val" data-input="row" data-f="val" data-r="${ri}" ${attrs} value="${esc(r.val)}" aria-label="Set ${ri + 1} ${esc(e.metric)}">` : ""}</td>
-        <td>${rows.length > 1 ? `<button class="btn small ghost" data-act="row-del" data-r="${ri}" ${attrs} aria-label="Remove set ${ri + 1}">&times;</button>` : ""}</td></tr>`).join("")}</tbody></table>
-      <div class="row"><button class="btn small" data-act="row-add" ${attrs}>Add set</button></div>
-      ${on ? "" : fld("Load target", "target", e, di, ei, "", "text", "7 RPE or 70-75% of 1RM")}</div></div></div></section>`;
+        <td>${e.metric ? `<input class="t num" id="r-${e.id}-${ri}-val" data-input="row" data-f="val" data-r="${ri}" ${attrs} value="${esc(r.val)}" aria-label="Set ${ri + 1} ${esc(MEASURE[e.metric] || e.metric)}">` : ""}</td></tr>`).join("")}</tbody></table>
+      <div class="th-setsbtn"><button data-act="row-pop" ${attrs} aria-label="Remove a set"${rows.length > 1 ? "" : " disabled"}>&minus;</button><span>Sets</span><button data-act="row-add" ${attrs} aria-label="Add a set">+</button></div>`;
+  }
+  return `<div class="th-ex${first ? " first" : ""}${last ? " last" : ""}" id="ex-${e.id}">${gut}<div class="th-lbcol"><span class="exb-lb" id="blk-${e.id}">${label || ""}</span></div><div class="th-exl stack">${left}</div><div class="th-exr stack">${right}</div></div>`;
 }
 function fld(label, key, e, di, ei, cls = "", type = "text", ph = "") {
-  return `<label class="f ${cls}">${label}<input class="t" id="x-${key}-${e.id}" type="${type}"${key === "name" ? ' list="ex-lib" autocomplete="off"' : key === "block" ? ' maxlength="2" autocapitalize="characters"' : ""}${type === "number" ? ' min="1" inputmode="numeric"' : ""} data-input="ex" data-k="${key}" data-d="${di}" data-e="${ei}" value="${esc(e[key])}"${ph ? ` placeholder="${esc(ph)}"` : ""}></label>`;
+  return `<label class="f ${cls}">${label}<input class="t" id="x-${key}-${e.id}" type="${type}" data-input="ex" data-k="${key}" data-d="${di}" data-e="${ei}" value="${esc(e[key])}"${ph ? ` placeholder="${esc(ph)}"` : ""}></label>`;
 }
 function saveProgramSoon() {
   const p = program(ui.programId); if (!p) return;
-  const s = document.getElementById("save-state"); if (s) s.textContent = "Saving";
-  debounce("program", () => api.saveProgram(p).then(() => { const s2 = document.getElementById("save-state"); if (s2) s2.textContent = "Saved"; }).catch((e) => fail(e, "Program")));
+  const show = (t) => { ui.saveState = t; document.querySelectorAll("#save-state").forEach((x) => { x.textContent = t; x.dataset.state = t; }); };
+  show("Saving...");
+  debounce("program", () => api.saveProgram(p).then(() => show("Saved")).catch((e) => { show("Not saved"); fail(e, "Program"); }));
+}
+
+// Exercise picker: every name in the exercise library or already used in a program, best matches first.
+let pickNames = null;
+function allExNames() {
+  if (pickNames) return pickNames;
+  const m = new Map();
+  for (const x of D.exercises) m.set(exKey(x.name), x.name);
+  for (const p of D.programs) for (const w of p.weeks) for (const d of w.days) for (const e of d.exercises) if (e.name && !isCircuit(e) && !m.has(exKey(e.name))) m.set(exKey(e.name), e.name.trim());
+  return (pickNames = [...m.values()].sort((a, b) => a.localeCompare(b)));
+}
+function pickList(input) {
+  const q = exKey(input.value), all = allExNames();
+  const hits = q ? all.filter((n) => exKey(n).includes(q)).sort((a, b) => (exKey(b).startsWith(q) - exKey(a).startsWith(q)) || a.length - b.length) : all;
+  const box = input.nextElementSibling, shown = hits.slice(0, 60);
+  ui.pickAt = Math.min(ui.pickAt || 0, Math.max(shown.length - 1, 0));
+  box.innerHTML = `<div class="xl-count">${hits.length} exercise${hits.length === 1 ? "" : "s"} shown</div><div class="xl-items" role="listbox">${shown.map((n, i) => `<button type="button" role="option" class="xl-item${i === ui.pickAt ? " on" : ""}" data-pick-name="${esc(n)}" aria-selected="${i === ui.pickAt}">${esc(n)}${libFor(n) ? '<span class="xl-tag">Library</span>' : ""}</button>`).join("") || `<p class="small muted xl-none">No match. Press Enter to use "${esc(input.value.trim())}".</p>`}</div>
+    <div class="xl-foot"><button type="button" data-pick-new="1">New Exercise</button><button type="button" data-pick-circuit="1">New Circuit</button></div>`;
+  box.hidden = false; input.setAttribute("aria-expanded", "true");
+}
+function closePick(input) { const box = input?.nextElementSibling; if (box) box.hidden = true; input?.setAttribute("aria-expanded", "false"); ui.pickAt = 0; }
+async function choosePick(input, how) {
+  const p = program(ui.programId), x = p.weeks[ui.week].days[+input.dataset.d].exercises[+input.dataset.e];
+  const name = how === "circuit" ? input.value.trim() || "Circuit" : how === "new" ? input.value.trim() : how;
+  if (how === "circuit") Object.assign(x, { kind: "circuit", name, cat: x.cat || "Conditioning", metric: "", rows: undefined, sets: "", reps: "", target: "" });
+  else if (name) x.name = name;
+  closePick(input); pickNames = null; ui.focus = how === "circuit" ? `x-note-${x.id}` : `r-${x.id}-0-reps`;
+  render(); saveProgramSoon();
+  if (how === "new" && name && D.progReady && !libFor(name)) {
+    try { const row = await api.saveExercise({ name, demo_url: "", demo_path: null, cues: "" }); D.exercises = [...D.exercises, row].sort((a, b) => a.name.localeCompare(b.name)); toast(`${name} added to your exercise library.`); }
+    catch (err) { fail(err, "Exercise library"); }
+  }
 }
 
 /* ----- coach: teams and each athlete's program ----- */
@@ -1393,13 +1536,13 @@ function vLog() {
   const labels = blockLabels(day.exercises);
   day.exercises.forEach((e, ei) => {
     const en = l.entries.find((x) => x.exId === e.id) || (l.entries[ei] = { exId: e.id, sets: [{ reps: "", kg: "", rpe: "", done: false }] });
-    const ins = [e.note, e.rest].filter(Boolean).join("\n"), vf = VAL_METRICS.includes(e.metric) ? "val" : "kg";
+    const ins = [e.note, e.tempo && `Tempo ${e.tempo}`, e.rest].filter(Boolean).join("\n"), vf = VAL_METRICS.includes(e.metric) ? "val" : "kg", circ = e.kind === "circuit";
     const lb = labels[ei], mates = lb && /\d$/.test(lb) ? labels.filter((x) => x && x[0] === lb[0]) : [];
     out += `${e.section ? `<div class="section-tag"><span class="kicker">${esc(e.section)}</span>${e.score ? `<span class="chip">${esc(e.score)}</span>` : ""}</div>` : ""}<section class="card${mates.length ? " superset" : ""}"><div class="row spread"><h3>${lb ? `<span class="blk">${lb}</span> ` : ""}${esc(e.name)}</h3><span class="row">${presetFor([e.name, e.section, e.score, e.reps, e.note].join(" ")) ? `<button class="link small" data-act="timer-ex" data-ex="${e.id}">Timer</button>` : ""}<button class="link small" data-act="film" data-ex="${esc(e.name)}">Film a set</button></span></div>
       ${mates.length && lb.endsWith("1") ? `<p class="small muted">Superset: do ${mates.join(" and ")} back to back, then rest.</p>` : ""}
       ${rxLine(e) ? `<p class="rx">${esc(rxLine(e))}</p>` : ""}${loadLine(me.id, e)}${ins ? `<p class="ins">${esc(ins)}</p>` : ""}${demoBit(e.name)}
-      <div class="colhead"><span>Set</span><span>Reps</span><span>${vf === "val" ? esc(e.metric) : "kg"}</span><span>RPE</span><span></span></div>
-      ${en.sets.map((s, si) => `<div class="setrow"><span class="n num">${si + 1}</span>${["reps", vf, "rpe"].map((f) =>
+      ${circ ? "" : `<div class="colhead"><span>Set</span><span>Reps</span><span>${vf === "val" ? esc(e.metric) : "kg"}</span><span>RPE</span><span></span></div>`}
+      ${circ ? "" : en.sets.map((s, si) => `<div class="setrow"><span class="n num">${si + 1}</span>${["reps", vf, "rpe"].map((f) =>
         `<input class="t num" id="s-${e.id}-${si}-${f}" inputmode="decimal" aria-label="Set ${si + 1} ${f}" data-input="set" data-ex="${e.id}" data-s="${si}" data-f="${f}" value="${esc(s[f])}" placeholder="${esc(setHint(e, si, f))}">`).join("")}
         <button class="tick" data-act="tick" data-ex="${e.id}" data-s="${si}" aria-pressed="${!!s.done}" aria-label="Set ${si + 1} done">${s.done ? "&#10003;" : ""}</button></div>`).join("")}${scoreRow(e, en)}</section>`;
   });
@@ -1476,6 +1619,10 @@ document.addEventListener("submit", async (ev) => {
 
 document.addEventListener("click", async (ev) => {
   document.querySelectorAll("details.kebab[open]").forEach((x) => { if (!x.contains(ev.target) || ev.target.closest(".kmenu")) x.open = false; });
+  if ((ui.ctx && !ev.target.closest(".th-ctx")) || (ui.pvOpts && !ev.target.closest(".th-pop"))) {
+    ui.ctx = null; ui.pvOpts = false;
+    if (!ev.target.closest("[data-act]")) { render(); return; }
+  }
   const b = ev.target.closest("[data-act]");
   if (!b || b.disabled) return;
   const { act, v, id } = b.dataset, d = +b.dataset.d, e = +b.dataset.e;
@@ -1663,10 +1810,13 @@ document.addEventListener("click", async (ev) => {
       try { await api.deleteRef(b.dataset.path); ui.refs = ui.refs.filter((r) => r.path !== b.dataset.path); paintCompare(); }
       catch (err) { fail(err, "Delete"); }
       break;
-    case "new-program":
+    case "new-program": go(() => (ui.newProg = { name: "", weeks: "4" })); document.getElementById("np-name")?.focus(); break;
+    case "np-cancel": go(() => (ui.newProg = null)); break;
+    case "np-create":
     case "example-program":
       try {
-        const base = act === "example-program" ? exampleProgram() : { name: "New program", note: "", weeks: [{ days: [{ id: newId(), name: "Tribe Build", dow: 1, coachNote: "", exercises: [] }] }] };
+        const n = ui.newProg, base = act === "example-program" ? exampleProgram() : { name: n.name.trim(), note: "", weeks: Array.from({ length: Math.min(52, Math.max(1, +n.weeks || 1)) }, () => ({ days: [] })) };
+        ui.newProg = null;
         const row = await api.createProgram(base);
         D.programs.unshift(row);
         go(() => { ui.programId = row.id; ui.week = 0; ui.view = "program"; }); scrollTo(0, 0);
@@ -1730,11 +1880,7 @@ document.addEventListener("click", async (ev) => {
       clip.set({ kind: "week", label: `Week ${wi + 1} of ${p.name}`, data: p.weeks[wi] }); render();
       toast(`Week ${wi + 1} copied. Open any program and tap Paste after.`); break;
     }
-    case "clip-sess": {
-      const x = wk.days[d];
-      clip.set({ kind: "session", label: `${x.name || "Session"} (week ${ui.week + 1} day ${dayNum(x.dow)})`, data: x }); render();
-      toast("Session copied. Tap Paste on any day, in any program."); break;
-    }
+    case "clip-sess": copySessions([{ w: ui.week, day: wk.days[d] }]); break;
     case "clip-block": {
       const exs = wk.days[d].exercises, key = String(exs[e].block || "").trim().toUpperCase();
       const part = key ? exs.filter((x) => String(x.block || "").trim().toUpperCase() === key) : [exs[e]];
@@ -1750,12 +1896,59 @@ document.addEventListener("click", async (ev) => {
       toast(`Pasted as week ${wi + 2}.`); break;
     }
     case "paste-sess": {
-      const c = clip.get(); if (c?.kind !== "session") return;
-      const wi = +b.dataset.w, day = { ...freshDay(c.data), dow: +b.dataset.dow };
-      p.weeks[wi].days.push(day);
-      go(() => { ui.week = wi; ui.sess = { w: wi, id: day.id }; ui.view = "session"; }); saveProgramSoon(); scrollTo(0, 0);
-      toast("Pasted. You're editing the copy."); break;
+      const items = clipSessions(); if (!items) return;
+      const wi = +b.dataset.w, col = DAY_ORDER.indexOf(+b.dataset.dow); let n = 0, firstDay = null;
+      for (const it of items) {
+        const tw = wi + it.dw, tc = col + it.dc;
+        if (!p.weeks[tw] || tc > 6) continue;
+        const day = { ...freshDay(it.day), dow: DAY_ORDER[tc] }; p.weeks[tw].days.push(day); n++; firstDay ||= day;
+      }
+      ui.ctx = null;
+      if (!n) { toast("Nothing pasted: that pattern runs past the end of the program."); render(); return; }
+      if (ui.view === "session") go(() => { ui.week = wi; ui.sess = { w: wi, id: firstDay.id }; }); else render();
+      saveProgramSoon(); toast(`Pasted ${n} session(s).${n < items.length ? ` ${items.length - n} ran past the end of the program and were left out.` : ""}`); break;
     }
+    case "sel-clear": go(() => (ui.sel = null)); break;
+    case "sel-copy": copySessions(selected(p)); go(() => (ui.sel = null)); break;
+    case "sel-del": {
+      const list = selected(p); if (!list.length) return;
+      if (!confirm(`Are you sure you want to delete ${list.length} session(s)?`)) return;
+      progEdit(() => { for (const it of list) { const ds = p.weeks[it.w].days; ds.splice(ds.indexOf(it.day), 1); } ui.sel = null; });
+      toast(`Successfully deleted ${list.length} session(s).`); break;
+    }
+    case "sel-repeat": {
+      const list = selected(p); if (!list.length) return;
+      const minW = Math.min(...list.map((x) => x.w)), maxW = Math.max(...list.map((x) => x.w));
+      go(() => (ui.repeat = { items: list, span: maxW - minW + 1, maxW })); break;
+    }
+    case "rp-cancel": go(() => (ui.repeat = null)); break;
+    case "rp-apply": {
+      const r = ui.repeat; if (!r) return; let n = 0;
+      if (r.one) {
+        const through = +document.getElementById("rp-through").value, dows = [...document.querySelectorAll("[data-rp-day]")].filter((x) => x.checked).map((x) => +x.dataset.rpDay);
+        for (let w = r.one.w; w <= through; w++) for (const dow of dows) { if (w === r.one.w && dow === r.one.day.dow) continue; p.weeks[w].days.push({ ...freshDay(r.one.day), dow }); n++; }
+      } else {
+        const times = +document.getElementById("rp-times").value;
+        for (let k = 1; k <= times; k++) for (const it of r.items) { const tw = it.w + k * r.span; if (p.weeks[tw]) { p.weeks[tw].days.push(freshDay(it.day)); n++; } }
+      }
+      progEdit(() => { ui.repeat = null; ui.sel = null; }); toast(n ? `Repeated: ${n} session(s) added.` : "Nothing to repeat. Tick at least one day."); break;
+    }
+    case "ctx-copy": { const k = ui.ctx; copySessions(p.weeks[k.w].days.filter((x) => x.dow === k.dow).map((day) => ({ w: k.w, day }))); go(() => (ui.ctx = null)); break; }
+    case "ctx-del": {
+      const k = ui.ctx, ds = p.weeks[k.w].days, list = ds.filter((x) => x.dow === k.dow);
+      if (!list.length || !confirm(`Are you sure you want to delete ${list.length} session(s)?`)) { go(() => (ui.ctx = null)); return; }
+      progEdit(() => { p.weeks[k.w].days = ds.filter((x) => !list.includes(x)); ui.ctx = null; }); toast(`Successfully deleted ${list.length} session(s).`); break;
+    }
+    case "pv-opts": go(() => (ui.pvOpts = !ui.pvOpts)); break;
+    case "pv-ins": go(() => { ui.showIns = !ui.showIns; ui.pvOpts = false; }); break;
+    case "pv-titles": go(() => { ui.showTitles = !ui.showTitles; ui.pvOpts = false; }); break;
+    case "p-settings": go(() => (ui.pSettings = !ui.pSettings)); break;
+    case "link": progEdit(() => {
+      const exs = wk.days[d].exercises, joining = !linked(exs, e);
+      toggleLink(exs, e);
+      // Joined blocks keep the first block's heading, category and result, as in TrainHeroic.
+      if (joining) { const [a, z] = groupsOf(exs).find(([a0, z0]) => e >= a0 && e <= z0); for (let i = a + 1; i <= z; i++) { exs[i].section = ""; exs[i].cat = ""; if (!isCircuit(exs[i])) exs[i].score = ""; } }
+    }); break;
     case "paste-block": {
       const c = clip.get(); if (c?.kind !== "block") return;
       const exs = wk.days[d].exercises, letter = c.data[0].block ? nextBlock(exs) : "";
@@ -1772,19 +1965,13 @@ document.addEventListener("click", async (ev) => {
       if (!x) return;
       const where = `Day ${dayNum(x.dow)}`;
       if (act === "card-copy") {
-        clip.set({ kind: "session", label: `${x.name || "Session"} (week ${wi + 1} day ${dayNum(x.dow)})`, data: x }); render();
-        toast("Session copied. Tap Paste on any day, in any program.");
+        copySessions([{ w: wi, day: x }]);
       } else if (act === "card-dup") {
         progEdit(() => days.splice(days.indexOf(x) + 1, 0, freshDay(x))); toast(`Duplicated on ${where}.`);
       } else if (act === "card-repeat") {
-        const left = p.weeks.length - wi - 1;
-        if (!left) { toast("This is the last week. Add a week first."); return; }
-        const n = Math.min(parseInt(prompt(`Repeat ${x.name || "this session"} on ${where} of how many later weeks? (1 to ${left})`, String(left)), 10), left);
-        if (!(n >= 1)) return;
-        progEdit(() => { for (let i = 1; i <= n; i++) p.weeks[wi + i].days.push(freshDay(x)); });
-        toast(n === 1 ? `Added to ${where} of week ${wi + 2}.` : `Added to ${where} of weeks ${wi + 2} to ${wi + 1 + n}.`);
+        go(() => (ui.repeat = { one: { w: wi, day: x } }));
       } else {
-        if (!confirm(`Delete ${x.name || "this session"}?`)) return;
+        if (!confirm("Are you sure you want to delete 1 session(s)?")) return;
         days.splice(days.indexOf(x), 1);
         if (ui.sess?.id === id) go(() => { ui.view = "program"; ui.sess = null; }); else render();
         saveProgramSoon();
@@ -1823,13 +2010,23 @@ document.addEventListener("click", async (ev) => {
       go(() => (ui.sess = { w: ui.week, id: copy.id })); saveProgramSoon(); toast("Duplicated. You're editing the copy."); break;
     }
     case "sess-del":
-      if (!confirm(`Delete ${wk.days[d].name || "this session"}?`)) return;
+      if (!confirm("Are you sure you want to delete 1 session(s)?")) return;
       wk.days.splice(d, 1); go(() => { ui.view = "program"; ui.sess = null; }); saveProgramSoon(); break;
     case "row-add": progEdit(() => { const x = wk.days[d].exercises[e], rows = rowsOf(x).map((r) => ({ ...r })); rows.push({ ...rows[rows.length - 1] }); applyRows(x, rows); }); break;
     case "row-del": progEdit(() => { const x = wk.days[d].exercises[e], rows = rowsOf(x).map((r) => ({ ...r })); rows.splice(+b.dataset.r, 1); applyRows(x, rows); }); break;
-    case "ex-add": progEdit(() => wk.days[d].exercises.push({ id: newId(), block: nextBlock(wk.days[d].exercises), name: "", sets: 3, reps: "8", target: "7 RPE", cue: "", rest: "", note: ui.week === 0 ? W1_LINE : "" })); break;
-    case "ex-del": progEdit(() => wk.days[d].exercises.splice(e, 1)); break;
-    case "ex-up": progEdit(() => { const a = wk.days[d].exercises; [a[e - 1], a[e]] = [a[e], a[e - 1]]; }); break;
+    case "row-pop": progEdit(() => { const x = wk.days[d].exercises[e], rows = rowsOf(x).map((r) => ({ ...r })); if (rows.length > 1) rows.pop(); applyRows(x, rows); }); break;
+    case "ex-add": {
+      const exs = wk.days[d].exercises, x = { id: newId(), block: "~new", name: "", sets: 3, reps: "", target: "", cue: "", rest: "", note: "", metric: "kg", rows: [{ reps: "", val: "" }, { reps: "", val: "" }, { reps: "", val: "" }] };
+      exs.push(x); relabel(exs); ui.focus = `x-name-${x.id}`; ui.pickOpen = true; render(); saveProgramSoon();
+      document.getElementById(`ex-${x.id}`)?.scrollIntoView({ block: "center" }); break;
+    }
+    case "ex-del": progEdit(() => { const exs = wk.days[d].exercises; exs.splice(e, 1); relabel(exs); }); break;
+    case "blk-del": {
+      const exs = wk.days[d].exercises, [a, z] = groupsOf(exs).find(([a0, z0]) => e >= a0 && e <= z0);
+      if (z > a && !confirm(`Delete this block and its ${z - a + 1} exercises?`)) return;
+      progEdit(() => { exs.splice(a, z - a + 1); relabel(exs); }); break;
+    }
+    case "ex-up": case "ex-down": progEdit(() => moveEx(wk.days[d].exercises, e, act === "ex-up" ? -1 : 1)); break;
     case "del-program": go(() => (ui.confirmDelProgram = true)); break;
     case "del-program-no": go(() => (ui.confirmDelProgram = false)); break;
     case "del-program-yes":
@@ -1913,9 +2110,15 @@ document.addEventListener("input", (ev) => {
   if (t.id === "v-ex") { ui.filmEx = t.value; return; }
   if (t.id === "chat-body") { ui.chatDraft = t.value; return; }
   if (!a) return;
+  if (t.dataset.count) { const c = document.getElementById(t.dataset.count); if (c) c.textContent = `${t.value.length}/10000`; }
   const p = program(ui.programId), wk = p?.weeks[ui.week], d = +t.dataset.d, e = +t.dataset.e;
   switch (a) {
     case "feedback": ui.drafts[t.dataset.id] = { ...(ui.drafts[t.dataset.id] || { verdict: "" }), feedback: t.value }; return;
+    case "np": {
+      ui.newProg = { name: document.getElementById("np-name").value, weeks: document.getElementById("np-weeks").value };
+      document.getElementById("np-count").textContent = `${ui.newProg.name.length}/75`;
+      document.getElementById("np-go").disabled = !(ui.newProg.name.trim() && +ui.newProg.weeks >= 1); return;
+    }
     case "p-name": p.name = t.value; break;
     case "p-note": p.note = t.value; break;
     case "d-name": wk.days[d].name = t.value; break;
@@ -1923,14 +2126,16 @@ document.addEventListener("input", (ev) => {
     case "ex": {
       const x = wk.days[d].exercises[e], k = t.dataset.k;
       x[k] = k === "sets" ? Math.max(1, +t.value || 1) : k === "block" ? t.value.trim().toUpperCase() : t.value;
-      const rx = document.getElementById("rx-" + x.id); if (rx) rx.textContent = rxLine(x);
+      if (k === "name") { pickList(t); const pv = document.getElementById("pv-" + x.id); if (pv) pv.previousElementSibling.textContent = t.value || "New exercise"; }
+      const rx = document.getElementById("rx-" + x.id); if (rx) rx.textContent = rxSummary(x);
       if (k === "block") blockLabels(wk.days[d].exercises).forEach((lb, i) => { const el = document.getElementById("blk-" + wk.days[d].exercises[i].id); if (el) el.textContent = lb; });
       break;
     }
     case "row": {
-      const x = wk.days[d].exercises[e], rows = rowsOf(x).map((r) => ({ ...r }));
-      rows[+t.dataset.r][t.dataset.f] = t.value; applyRows(x, rows);
-      const rx = document.getElementById("rx-" + x.id); if (rx) rx.textContent = rxLine(x);
+      const x = wk.days[d].exercises[e], f = t.dataset.f, r = +t.dataset.r, rows = autofill(rowsOf(x).map((y) => ({ ...y })), r, f, t.value);
+      applyRows(x, rows);
+      rows.forEach((y, i) => { if (i > r) { const el = document.getElementById(`r-${x.id}-${i}-${f}`); if (el) el.value = y[f]; } });
+      for (const id of ["rx-", "pv-"]) { const el = document.getElementById(id + x.id); if (el) el.textContent = rxSummary(x); }
       break;
     }
     case "ath-q": ui.athQ = t.value; filterAth(); return;
@@ -1975,6 +2180,7 @@ document.addEventListener("change", async (ev) => {
     if (!x.metric && was) x.target = rows.every((r) => r.val === rows[0].val) ? valText(rows[0].val, was) : "";
     applyRows(x, rows); render(); saveProgramSoon();
   }
+  if (a === "cat" || a === "score") { const x = program(ui.programId).weeks[ui.week].days[+t.dataset.d].exercises[+t.dataset.e]; x[a] = t.value; render(); saveProgramSoon(); return; }
   if (a === "d-dow") { program(ui.programId).weeks[ui.week].days[+t.dataset.d].dow = +t.value; render(); saveProgramSoon(); }
   if (a === "c-prog") await patchProfile(ui.clientId, { program_id: t.value || null }, "Program assigned.");
   if (a === "lib-theme") {
@@ -2047,3 +2253,90 @@ async function doUpload() {
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) navigator.serviceWorker.register("sw.js").catch(() => {});
 boot();
+
+/* ----- program builder: picker keys, set table keys, calendar selection box, drag to move, right-click ----- */
+const pickInput = (el) => el?.closest?.(".xpick")?.querySelector("input[data-pick]");
+document.addEventListener("focusin", (ev) => {
+  const t = ev.target;
+  if (t.matches?.("input[data-pick]")) { ui.pickAt = 0; pickList(t); }
+  if (t.matches?.("table.sets.th input")) t.select();
+});
+document.addEventListener("focusout", (ev) => {
+  const t = ev.target;
+  if (t.matches?.("input[data-pick]")) setTimeout(() => { if (document.activeElement !== t) closePick(t); }, 120);
+});
+document.addEventListener("mousedown", (ev) => {
+  const b = ev.target.closest?.("[data-pick-name],[data-pick-new],[data-pick-circuit]");
+  if (!b) return;
+  ev.preventDefault();
+  const input = pickInput(b);
+  choosePick(input, b.dataset.pickNew ? "new" : b.dataset.pickCircuit ? "circuit" : b.dataset.pickName);
+});
+document.addEventListener("keydown", (ev) => {
+  const t = ev.target;
+  if (t.matches?.("input[data-pick]")) {
+    const box = t.nextElementSibling, items = box ? [...box.querySelectorAll(".xl-item")] : [];
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault(); if (box.hidden) return pickList(t);
+      ui.pickAt = Math.max(0, Math.min(items.length - 1, (ui.pickAt || 0) + (ev.key === "ArrowDown" ? 1 : -1)));
+      items.forEach((x, i) => { x.classList.toggle("on", i === ui.pickAt); x.setAttribute("aria-selected", i === ui.pickAt); });
+      items[ui.pickAt]?.scrollIntoView({ block: "nearest" });
+    } else if (ev.key === "Enter") {
+      ev.preventDefault();
+      const hit = !box.hidden && items[ui.pickAt || 0];
+      choosePick(t, hit ? hit.dataset.pickName : "new");
+    } else if (ev.key === "Escape") closePick(t);
+    return;
+  }
+  // Set table: Enter goes down a row in the same column, like a spreadsheet.
+  if (ev.key === "Enter" && t.matches?.("table.sets.th input")) {
+    ev.preventDefault();
+    const next = document.getElementById(t.id.replace(/-(\d+)-(reps|val)$/, (_, r, f) => `-${+r + 1}-${f}`));
+    if (next) next.focus(); else t.blur();
+  }
+  if (ev.key === "Escape" && (ui.sel?.size || ui.ctx || ui.repeat || ui.newProg)) { ui.sel = null; ui.ctx = null; ui.repeat = null; ui.newProg = null; render(); }
+});
+// Drag a box over empty calendar space to pick sessions; drag a session card to move it.
+let rb = null;
+document.addEventListener("pointerdown", (ev) => {
+  const grid = ev.target.closest?.("#pgrid");
+  if (!grid || ev.button !== 0 || ev.target.closest(".sess-box, button, a, input, select, details")) return;
+  rb = { x: ev.clientX, y: ev.clientY, el: null };
+});
+document.addEventListener("pointermove", (ev) => {
+  if (!rb) return;
+  const dx = ev.clientX - rb.x, dy = ev.clientY - rb.y;
+  if (!rb.el && Math.hypot(dx, dy) < 6) return;
+  if (!rb.el) { rb.el = document.createElement("div"); rb.el.className = "th-rb"; document.body.append(rb.el); document.body.classList.add("noselect"); }
+  Object.assign(rb.el.style, { left: Math.min(ev.clientX, rb.x) + "px", top: Math.min(ev.clientY, rb.y) + "px", width: Math.abs(dx) + "px", height: Math.abs(dy) + "px" });
+});
+document.addEventListener("pointerup", () => {
+  if (!rb) return;
+  const box = rb.el?.getBoundingClientRect(); rb.el?.remove(); document.body.classList.remove("noselect"); rb = null;
+  if (!box) return;
+  const hit = [...document.querySelectorAll("#pgrid .sess-box")].filter((c) => { const r = c.getBoundingClientRect(); return r.left < box.right && r.right > box.left && r.top < box.bottom && r.bottom > box.top; });
+  ui.sel = new Set(hit.map((c) => `${c.dataset.w}:${c.dataset.id}`)); render();
+});
+document.addEventListener("dragstart", (ev) => {
+  const c = ev.target.closest?.("#pgrid .sess-box"); if (!c) return;
+  ui.drag = { w: +c.dataset.w, id: c.dataset.id }; ev.dataTransfer.effectAllowed = "move"; ev.dataTransfer.setData("text/plain", c.dataset.id);
+});
+document.addEventListener("dragover", (ev) => {
+  const cell = ui.drag && ev.target.closest?.("#pgrid .pg-cell"); if (!cell) return;
+  ev.preventDefault(); document.querySelectorAll(".pg-cell.over").forEach((x) => x !== cell && x.classList.remove("over")); cell.classList.add("over");
+});
+document.addEventListener("drop", (ev) => {
+  const cell = ui.drag && ev.target.closest?.("#pgrid .pg-cell"); if (!cell) return;
+  ev.preventDefault();
+  const p = program(ui.programId), { w, id } = ui.drag, from = p.weeks[w].days, day = from.find((x) => x.id === id), tw = +cell.dataset.w, dow = +cell.dataset.dow;
+  ui.drag = null;
+  if (!day || (tw === w && dow === day.dow)) return render();
+  from.splice(from.indexOf(day), 1); day.dow = dow; p.weeks[tw].days.push(day);
+  render(); saveProgramSoon(); toast(`Moved to week ${tw + 1} day ${dayNum(dow)}.`);
+});
+document.addEventListener("dragend", () => { ui.drag = null; document.querySelectorAll(".pg-cell.over").forEach((x) => x.classList.remove("over")); });
+document.addEventListener("contextmenu", (ev) => {
+  const cell = ev.target.closest?.("#pgrid .pg-cell"); if (!cell) return;
+  ev.preventDefault();
+  ui.ctx = { w: +cell.dataset.w, dow: +cell.dataset.dow, x: Math.min(ev.clientX, innerWidth - 200), y: Math.min(ev.clientY, innerHeight - 150) }; render();
+});
