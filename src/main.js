@@ -1423,9 +1423,14 @@ function prBoard(cid) {
   let out = "", filled = 0;
   if (D.progReady) {
     const presets = new Set(Object.values(PR_LIFTS).flat().map(exKey));
-    const others = D.maxes.filter((m) => m.client_id === cid && !presets.has(exKey(m.exercise))).map((m) => m.exercise);
+    // Other lifts can run to hundreds (TrainHeroic keeps a max for nearly every exercise), so collapsed shows only
+    // the ones this athlete's program loads by percentage; "Show all" lists the rest.
+    const inProg = new Set(pctNames.map(exKey));
+    const othersAll = D.maxes.filter((m) => m.client_id === cid && !presets.has(exKey(m.exercise))).map((m) => m.exercise);
+    const others = all ? othersAll : othersAll.filter((n) => inProg.has(exKey(n))), hidden = othersAll.length - others.length;
     filled += D.maxes.filter((m) => m.client_id === cid).length;
-    out += group("Strength", "1RM", [...PR_LIFTS.Strength, ...others, ...missing.filter((n) => !presets.has(exKey(n)))].map(liftRow)) + group("Olympic lifting", "1RM", PR_LIFTS.Olympic.map(liftRow));
+    out += group("Strength", "1RM", [...PR_LIFTS.Strength, ...others, ...missing.filter((n) => !presets.has(exKey(n)))].map(liftRow)) + group("Olympic lifting", "1RM", PR_LIFTS.Olympic.map(liftRow))
+      + (hidden ? `<p class="small muted">${hidden} more 1RM${hidden === 1 ? "" : "s"} on file. Show all to see them.</p>` : "");
     if (all) out += `${missing.length ? `<p class="small muted">Missing for this program: ${missing.map(esc).join(", ")}</p>` : ""}
       <div class="row pr-add"><input class="t" id="max-new-ex-${cid}" list="max-names-${cid}" maxlength="80" placeholder="Other lift, e.g. Box Squat" aria-label="Lift">
         <input class="t num kg" id="max-new-kg-${cid}" inputmode="decimal" placeholder="kg" aria-label="1RM in kg">
