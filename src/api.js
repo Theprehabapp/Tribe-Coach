@@ -27,6 +27,16 @@ export const setPassword = (password) => sb.auth.updateUser({ password }).then(c
 export const signOut = () => sb.auth.signOut();
 
 /* ---------- loading ---------- */
+// Supabase returns at most 1,000 rows per request, so big tables are read in pages until a short page comes back.
+// make() builds a fresh, fully ordered query each time (ties broken by a unique column so pages don't overlap).
+export async function every(make) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const rows = check(await make().range(from, from + 999));
+    out.push(...rows);
+    if (rows.length < 1000) return out;
+  }
+}
 export async function myProfile(uid) {
   return check(await sb.from("profiles").select("*").eq("id", uid).maybeSingle());
 }
@@ -34,26 +44,26 @@ export async function myProfile(uid) {
 // RLS decides what comes back: the coach gets everyone, a client gets their own rows and assigned program.
 export async function loadAll() {
   const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs, prHistory, checkins, invites, callSettings, calls] = await Promise.all([
-    sb.from("profiles").select("*").order("created_at").then(check),
-    sb.from("programs").select("*").order("created_at", { ascending: false }).then(check),
-    sb.from("logs").select("*").order("date", { ascending: false }).then(check),
-    sb.from("videos").select("*").order("uploaded_at", { ascending: false }).then(check),
+    every(() => sb.from("profiles").select("*").order("created_at").order("id")),
+    every(() => sb.from("programs").select("*").order("created_at", { ascending: false }).order("id")),
+    every(() => sb.from("logs").select("*").order("date", { ascending: false }).order("id")),
+    every(() => sb.from("videos").select("*").order("uploaded_at", { ascending: false }).order("id")),
     // Chat arrived with migration 0004. Until it's run, the rest of the app keeps working without it.
-    sb.from("messages").select("*").order("created_at").then(check).catch(() => null),
+    every(() => sb.from("messages").select("*").order("created_at").order("id")).catch(() => null),
     // Exercise library and 1RMs arrived with migration 0008.
     sb.from("exercises").select("*").order("name").then(check).catch(() => null),
-    sb.from("maxes").select("*").order("exercise").then(check).catch(() => null),
+    every(() => sb.from("maxes").select("*").order("exercise").order("client_id")).catch(() => null),
     // Teams arrived with migration 0009.
     sb.from("teams").select("*").order("name").then(check).catch(() => null),
     // Leaderboards and session comments arrived with migration 0010.
     sb.from("messages").select("log_id").limit(1).then(check).then(() => true, () => false),
     // Gymnastics and benchmark PRs arrived with migration 0011.
-    sb.from("prs").select("*").order("name").then(check).catch(() => null),
-    sb.from("pr_history").select("*").then(check).catch(() => null),
+    every(() => sb.from("prs").select("*").order("name").order("client_id")).catch(() => null),
+    every(() => sb.from("pr_history").select("*").order("client_id").order("name").order("scored_on")).catch(() => null),
     // Daily check-ins arrived with migration 0012. The last 4 weeks are plenty.
     sb.from("checkins").select("*").gte("day", new Date(Date.now() - 28 * 864e5).toISOString().slice(0, 10)).order("day", { ascending: false }).then(check).catch(() => null),
     // Team invites by email arrived with migration 0014.
-    sb.from("team_invites").select("*").order("email").then(check).catch(() => null),
+    every(() => sb.from("team_invites").select("*").order("email")).catch(() => null),
     // Monthly check-in calls arrived with migration 0016. A client gets only their own bookings.
     sb.from("settings").select("calls").eq("id", 1).maybeSingle().then(check).catch(() => null),
     sb.from("calls").select("*").order("starts_at").then(check).catch(() => null),
