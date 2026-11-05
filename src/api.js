@@ -43,7 +43,7 @@ export async function myProfile(uid) {
 
 // RLS decides what comes back: the coach gets everyone, a client gets their own rows and assigned program.
 export async function loadAll() {
-  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs, prHistory, checkins, invites, callSettings, calls] = await Promise.all([
+  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs, prHistory, checkins, invites, callSettings, calls, libItems] = await Promise.all([
     every(() => sb.from("profiles").select("*").order("created_at").order("id")),
     every(() => sb.from("programs").select("*").order("created_at", { ascending: false }).order("id")),
     every(() => sb.from("logs").select("*").order("date", { ascending: false }).order("id")),
@@ -51,7 +51,7 @@ export async function loadAll() {
     // Chat arrived with migration 0004. Until it's run, the rest of the app keeps working without it.
     every(() => sb.from("messages").select("*").order("created_at").order("id")).catch(() => null),
     // Exercise library and 1RMs arrived with migration 0008.
-    sb.from("exercises").select("*").order("name").then(check).catch(() => null),
+    every(() => sb.from("exercises").select("*").order("name").order("id")).catch(() => null),
     every(() => sb.from("maxes").select("*").order("exercise").order("client_id")).catch(() => null),
     // Teams arrived with migration 0009.
     sb.from("teams").select("*").order("name").then(check).catch(() => null),
@@ -67,12 +67,15 @@ export async function loadAll() {
     // Monthly check-in calls arrived with migration 0016. A client gets only their own bookings.
     sb.from("settings").select("calls").eq("id", 1).maybeSingle().then(check).catch(() => null),
     sb.from("calls").select("*").order("starts_at").then(check).catch(() => null),
+    // Session templates, circuits and prescriptions arrived with migration 0019.
+    every(() => sb.from("library_items").select("*").order("title").order("id")).catch(() => null),
   ]);
   // Labelled breakdown clips arrived with migration 0006; until it's run, one breakdown per video as before.
   return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages, clipsReady: videos.some((v) => "clips" in v),
     exercises: exercises || [], maxes: maxes || [], progReady: !!exercises && !!maxes,
     teams: teams || [], teamsReady: !!teams, socialReady: social, prs: prs || [], prHistory: prHistory || [], prsReady: !!prs && !!prHistory, checkins: checkins || [], checkinsReady: !!checkins, invites: invites || [], invitesReady: !!invites,
-    callCfg: callSettings?.calls || null, calls: calls || [], callsReady: !!calls && !!callSettings?.calls };
+    callCfg: callSettings?.calls || null, calls: calls || [], callsReady: !!calls && !!callSettings?.calls,
+    libItems: libItems || [], libReady: !!libItems && (exercises || []).every((x) => "tags" in x) };
 }
 
 /* ---------- check-in calls ---------- */
@@ -172,10 +175,21 @@ export async function uploadRef(coachId, file, label) {
 export const deleteRef = async (path) => check(await sb.storage.from(BUCKET).remove([path]));
 
 /* ---------- exercise library and 1RMs ---------- */
-export const saveExercise = (x) => (x.id
-  ? sb.from("exercises").update({ name: x.name, demo_url: x.demo_url, demo_path: x.demo_path, cues: x.cues }).eq("id", x.id)
-  : sb.from("exercises").insert({ name: x.name, demo_url: x.demo_url || "", demo_path: x.demo_path || null, cues: x.cues || "" })
-).select().single().then(check);
+// The TrainHeroic-style fields (migration 0019) are sent only when the row has them, so an older database still saves.
+const EX_EXTRA = ["param1", "param2", "tags", "swaps", "ref_max", "track_as", "created_by"];
+export const saveExercise = (x) => {
+  const row = { name: x.name, demo_url: x.demo_url || "", demo_path: x.demo_path || null, cues: x.cues || "" };
+  for (const k of EX_EXTRA) if (x[k] !== undefined) row[k] = x[k];
+  return (x.id ? sb.from("exercises").update(row).eq("id", x.id) : sb.from("exercises").insert(row)).select().single().then(check);
+};
+export const deleteExercises = (ids) => sb.from("exercises").delete().in("id", ids).then(check);
+
+/* ---------- library: session templates, circuits, prescriptions ---------- */
+export const saveLibItem = (it) => {
+  const row = { kind: it.kind, title: it.title, tags: it.tags || [], data: it.data || {}, created_by: it.created_by || "", updated_at: new Date().toISOString() };
+  return (it.id ? sb.from("library_items").update(row).eq("id", it.id) : sb.from("library_items").insert(row)).select().single().then(check);
+};
+export const deleteLibItems = (ids) => sb.from("library_items").delete().in("id", ids).then(check);
 export async function deleteExercise(x) {
   check(await sb.from("exercises").delete().eq("id", x.id));
   if (x.demo_path) await sb.storage.from(BUCKET).remove([x.demo_path]);

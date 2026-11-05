@@ -7,11 +7,12 @@ const num = (v) => { const n = parseFloat(String(v ?? "").replace(",", ".")); re
 export const e1rm = (kg, reps) => (kg <= 0 || reps < 1 || reps > 12 ? 0 : reps === 1 ? kg : Math.round(kg * (1 + reps / 30) * 10) / 10);
 
 // Every set with both reps and kg, flattened: { key, name, date, logId, kg, reps }.
-// nameOf(log, exId) finds the exercise name for older entries that didn't store it.
-export function liftSets(logs, nameOf) {
+// nameOf(log, exId) finds the exercise name for older entries that didn't store it; track(name) maps it to the
+// exercise its sets count towards (the library's Track As).
+export function liftSets(logs, nameOf, track = (n) => n) {
   const out = [];
   for (const l of logs) for (const en of l.entries || []) {
-    const name = String(en.name || nameOf(l, en.exId) || "").trim();
+    const name = String(track(String(en.name || nameOf(l, en.exId) || "").trim()) || "").trim();
     if (!name) continue;
     for (const s of en.sets || []) {
       const kg = num(s.kg), reps = Math.round(num(s.reps));
@@ -47,8 +48,8 @@ export function records(sets) {
 }
 
 // What a just-finished session beat: one line per exercise, only where there was history to beat.
-export function newPRs(log, logs, nameOf) {
-  const mine = liftSets([log], nameOf), before = records(liftSets(logs.filter((l) => l.id !== log.id), nameOf));
+export function newPRs(log, logs, nameOf, track) {
+  const mine = liftSets([log], nameOf, track), before = records(liftSets(logs.filter((l) => l.id !== log.id), nameOf, track));
   const out = new Map();
   for (const s of mine) {
     const r = before.get(s.key); if (!r) continue;

@@ -7,6 +7,7 @@ import * as notify from "./notify.js";
 import { liftSets, series, records, newPRs } from "./progress.js";
 import { PR_LIFTS, PR_SETS, KINDS, validScore, scoreKind, prTarget, beats } from "./scores.js";
 import { openTimer, closeTimer, presetFor, restSecs } from "./timer.js";
+import { PARAMS, STOCK_TAGS, RX_CATEGORIES, CIRCUIT_RESULTS, metricOf, paramOf, resultTag, resultLabel, filterRows, sortRows, pageOf, tagCounts, rxTitle, applyRx, cleanSwaps, cleanTags } from "./library.js";
 import { DEFAULT_CALLS, slotsFor, callMonth, nextMonth, googleLink, icsFile } from "./calls.js";
 import {
   FEEDBACK_HOURS, DOW_LONG, W1_LINE, ymd, fmtDay, fmtLong, fmtTime,
@@ -20,7 +21,7 @@ const app = document.getElementById("app");
 const tabsEl = document.getElementById("tabs");
 
 // All data the signed-in person may see, loaded once and kept in sync as they act.
-let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false, teams: [], teamsReady: false, socialReady: false, prs: [], prHistory: [], prsReady: false, checkins: [], checkinsReady: false, invites: [], invitesReady: false };
+let D = { profiles: [], programs: [], logs: [], videos: [], messages: [], chatReady: false, clipsReady: false, exercises: [], maxes: [], progReady: false, teams: [], teamsReady: false, socialReady: false, prs: [], prHistory: [], prsReady: false, checkins: [], checkinsReady: false, invites: [], invitesReady: false, libItems: [], libReady: false };
 let me = null; // signed-in profile
 let ui = { tab: null, view: null, programId: null, week: 0, clientId: null, logKey: null, drafts: {}, file: null, busy: false };
 
@@ -28,7 +29,7 @@ let ui = { tab: null, view: null, programId: null, week: 0, clientId: null, logK
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const isCoach = () => me?.role === "coach";
 const profile = (id) => D.profiles.find((p) => p.id === id);
-const program = (id) => D.programs.find((p) => p.id === id);
+const program = (id) => (id === "tpl" ? ui.tplProg : D.programs.find((p) => p.id === id));
 const clients = () => D.profiles.filter((p) => p.role === "client");
 const today = () => ymd(new Date());
 const findLog = (cid, pid, w, dayId) => D.logs.find((l) => l.client_id === cid && l.program_id === pid && l.week === w && l.day_id === dayId);
@@ -58,7 +59,11 @@ async function copyFor(c, src, from) {
 }
 // Exercise library entry and an athlete's 1RM for an exercise name, matched loosely.
 const libFor = (name) => D.exercises.find((x) => exKey(x.name) === exKey(name));
-const maxFor = (cid, name) => D.maxes.find((m) => m.client_id === cid && exKey(m.exercise) === exKey(name));
+const maxOf = (cid, name) => D.maxes.find((m) => m.client_id === cid && exKey(m.exercise) === exKey(name));
+// An exercise's Reference Max (library) decides whose 1RM a % is taken from, like TrainHeroic; its own 1RM if that one has none.
+const maxFor = (cid, name) => { const ref = libFor(name)?.ref_max?.trim(); return (ref && maxOf(cid, ref)) || maxOf(cid, name); };
+// Track As (library): sets logged on one exercise count towards another's charts and PRs.
+const trackName = (name) => libFor(name)?.track_as?.trim() || name;
 // Copy and paste between programs: one week, one session or one block (all exercises sharing a letter).
 // Kept in this browser so it survives switching programs or reloading.
 const CLIP_KEY = "tribe-clip";
@@ -221,7 +226,7 @@ const section = () => !isCoach() || !ui.view ? (ui.view ? null : ui.tab)
   : ({ program: "programs", session: "programs", exlib: "programs", client: "clients", team: "clients", calls: "clients", review: ui.lib ? "clients" : "queue" })[ui.view] || null;
 function renderTabs() {
   const tabs = isCoach()
-    ? [["queue", "Review", waiting().length], ["programs", "Programs"], ["clients", "Clients", clients().filter((c) => !c.approved).length + clients().reduce((n, c) => n + unread(c.id), 0)]]
+    ? [["queue", "Review", waiting().length], ["programs", "Library"], ["clients", "Clients", clients().filter((c) => !c.approved).length + clients().reduce((n, c) => n + unread(c.id), 0)]]
     : [["today", "Training"], ["videos", "Videos"], ["chat", "Coach", unread(me.id)], ["history", "Log"]];
   document.querySelector(".tabs").hidden = false;
   document.body.classList.toggle("coach", isCoach());
@@ -272,7 +277,6 @@ function render() {
   else if (ui.view === "session") html = vSession();
   else if (ui.view === "client") html = vClientDetail();
   else if (ui.view === "log") html = vLog();
-  else if (ui.view === "exlib") html = vExLib();
   else if (ui.view === "team") html = vTeam();
   else if (ui.view === "calls") html = vCalls();
   else if (ui.view === "password") html = vSetPassword(false);
@@ -541,32 +545,249 @@ const BICON = {
   up: '<path d="m6 15 6-6 6 6"/>', down: '<path d="m6 9 6 6 6-6"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   pencil: '<path d="M4 20h4L19 9l-4-4L4 16z"/>', repeat: '<path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>',
-  x: '<path d="M6 6l12 12M18 6 6 18"/>', paste: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>', search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>', play: '<path d="M8 5v14l11-7z"/>',
+  book: '<path d="M4 19V5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0-2 2zm0 0a2 2 0 0 0 2 2h14"/>', left: '<path d="m15 6-6 6 6 6"/>', right: '<path d="m9 6 6 6-6 6"/>', paste: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
 };
 const ico = (k) => svg(BICON[k]);
 // Block categories, as TrainHeroic names them. The category is also the block's title until the coach types one.
 const CATS = ["Uncategorized", "Prep", "Speed/Agility", "Skill/Tech", "Strength/Power", "Conditioning", "Recovery"];
 // What a block is scored in. Stored as the "(FOR X)" tag the athlete app already reads; Rounds + reps is ours, TrainHeroic can't score it.
-const RESULTS = [["", "-"], ["(FOR TIME)", "Time"], ["(FOR ROUNDS + REPS)", "Rounds + reps"], ["(FOR ROUNDS)", "Rounds"], ["(FOR REPS)", "Reps"], ["(FOR CALORIES)", "Calories"],
-  ["(FOR METRES)", "Metres"], ["(FOR WATTS)", "Watts"], ["(FOR LOAD)", "Weight"], ["(FOR SECONDS)", "Seconds"]];
+// TrainHeroic's Results list in its order, then Rounds + reps; older tags ("(FOR METRES)", "(FOR LOAD)") still show under their own name.
+const RESULTS = [...CIRCUIT_RESULTS.map((l) => [resultTag(l), l]), ["(FOR ROUNDS + REPS)", "Rounds + reps"], ["(FOR METRES)", "Metres"], ["(FOR LOAD)", "Load"]];
 const resultSelect = (e, attrs, label) => {
   const cur = String(e.score || ""), known = RESULTS.some(([v]) => v === cur);
-  return `<select class="t mini th-res" data-change="score" ${attrs} aria-label="${label}">${known ? "" : `<option value="${esc(cur)}" selected>${esc(cur.replace(/[()]/g, ""))}</option>`}${RESULTS.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${l}</option>`).join("")}</select>`;
+  return `<select class="t mini th-res" data-change="score" ${attrs} aria-label="${label}">${known ? "" : `<option value="${esc(cur)}" selected>${esc(cur.replace(/[()]/g, ""))}</option>`}${RESULTS.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${!v && !isCircuit(e) ? "-" : l}</option>`).join("")}</select>`;
 };
 // The set table's measure column, labelled the way TrainHeroic labels it.
 const MEASURE = { "": "Optional", kg: "Weight (kg)", "% 1RM": "Weight (%)", RPE: "RPE", Watts: "Watts", Seconds: "Seconds (s)", Metres: "Distance (meters)", Calories: "Calories (cal)", Time: "Time (min:sec)", Velocity: "Velocity (m/s)", Other: "Other Number" };
 const tagOf = (e) => String(e.score || "").replace(/[()]/g, "").trim();
 const isCircuit = (e) => e.kind === "circuit";
 
+/* ----- coach: the Library, filed like TrainHeroic's: one flat table per type, A to Z, 100 a page ----- */
+const LIB_TABS = [["programs", "Programs"], ["sessions", "Sessions"], ["exercises", "Exercises"], ["circuits", "Circuits"], ["prescriptions", "Prescriptions"]];
+const KIND_OF = { sessions: "session", circuits: "circuit", prescriptions: "prescription" };
+const libOf = (kind) => (D.libItems || []).filter((x) => x.kind === kind);
+const libItem = (id) => (D.libItems || []).find((x) => x.id === id);
+const myName = () => me?.name || "Coach";
+const byName = (a, b) => a.name.localeCompare(b.name);
+const short = (s, n = 90) => { const t = String(s || "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n - 1) + "…" : t; };
+const chips = (list) => (list?.length ? `<span class="lib-chips">${list.map((t) => `<span class="lib-chip">${esc(t)}</span>`).join("")}</span>` : "");
+const titleBtn = (act, id, name) => `<button class="th-title" data-act="${act}" data-id="${id}">${tile(name)}<span>${esc(name)}</span></button>`;
+const hasVideo = (x) => !!(x?.demo_url || x?.demo_path);
+const libDate = (iso) => (iso ? new Date(iso).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : "");
+const libState = (tab) => ((ui.libState ||= {})[tab] ||= { q: "", tag: "", sort: "title", dir: "asc", page: 0 });
+
+function libRows(tab) {
+  if (tab === "programs") return libraryPrograms();
+  if (tab === "exercises") return D.exercises;
+  return libOf(KIND_OF[tab]);
+}
+const rowTitle = (tab, r) => (tab === "programs" || tab === "exercises" ? r.name : r.title);
+const rowTags = (tab, r) => (tab === "programs" || tab === "sessions" ? [] : r.tags || []);
+function libCols(tab, usage) {
+  const title = { k: "title", label: "Title", get: (r) => rowTitle(tab, r) };
+  const by = { k: "by", label: "Created By", get: (r) => r.created_by || "" };
+  const tags = { k: "tags", label: tab === "prescriptions" ? "Categories" : "Tags", get: (r) => (r.tags || []).join(", "), cell: (r) => chips(r.tags) };
+  switch (tab) {
+    case "programs": return [
+      { ...title, cell: (p) => titleBtn("open-program", p.id, p.name) },
+      { k: "weeks", label: "Weeks", num: true, get: (p) => p.weeks.length },
+      { k: "sessions", label: "Sessions", num: true, get: (p) => p.weeks.reduce((a, w) => a + w.days.length, 0) },
+      { k: "usage", label: "Athletes", num: true, get: (p) => usage.get(p.id) || 0 },
+      { k: "desc", label: "Description", get: (p) => p.note || "", cell: (p) => `<span class="small muted">${esc(short(p.note))}</span>` },
+      { k: "act", label: "Actions", cell: (p) => `<span class="row nowrap"><button class="th-ib" data-act="open-program" data-id="${p.id}" title="Edit" aria-label="Edit ${esc(p.name)}">${ico("pencil")}</button><button class="th-ib" data-act="prog-settings" data-id="${p.id}" title="Settings" aria-label="Settings for ${esc(p.name)}">${ico("gear")}</button></span>` }];
+    case "sessions": return [
+      { ...title, cell: (r) => titleBtn("open-tpl", r.id, r.title) }, by,
+      { k: "date", label: "Date Created", get: (r) => r.created_at || "", cell: (r) => `<span class="small num">${libDate(r.created_at)}</span>` },
+      { k: "act", label: "Actions", cell: (r) => `<button class="th-ib" data-act="lib-del-one" data-id="${r.id}" title="Delete" aria-label="Delete ${esc(r.title)}">${ico("trash")}</button>` }];
+    case "exercises": return [
+      { ...title, cell: (x) => titleBtn("open-ex", x.id, x.name) },
+      { k: "video", label: "Video", get: (x) => (hasVideo(x) ? 0 : 1), cell: (x) => (hasVideo(x) ? `<span class="lib-vid" title="Has a video">${ico("play")}</span>` : "") },
+      { k: "pop", label: "Points of Performance", get: (x) => x.cues || "", cell: (x) => `<span class="small muted">${esc(short(x.cues, 70))}</span>` },
+      { k: "swaps", label: "Suggested Swaps", get: (x) => (x.swaps || []).join(", "), cell: (x) => `<span class="small">${esc((x.swaps || []).join(", "))}</span>` },
+      tags, by];
+    case "circuits": return [
+      { ...title, cell: (r) => titleBtn("open-circ", r.id, r.title) },
+      { k: "results", label: "Results", get: (r) => r.data?.results || "For Completion" },
+      { k: "video", label: "Video", get: (r) => (r.data?.videos?.length ? 0 : 1), cell: (r) => (r.data?.videos?.length ? `<span class="lib-vid" title="${esc(r.data.videos.join(", "))}">${ico("play")}</span>` : "") },
+      { k: "ins", label: "Instructions", get: (r) => r.data?.instructions || "", cell: (r) => `<span class="small muted">${esc(short(r.data?.instructions, 70))}</span>` },
+      tags, by];
+    default: return [
+      { ...title, cell: (r) => titleBtn("open-rx", r.id, r.title) },
+      { k: "sets", label: "Sets", num: true, get: (r) => r.data?.rows?.length || 0 },
+      { k: "p1", label: "Parameter 1", get: (r) => r.data?.param1 || "" },
+      { k: "p2", label: "Parameter 2", get: (r) => r.data?.param2 || "" },
+      tags];
+  }
+}
 function vPrograms() {
-  const rows = libraryPrograms().map((p) => {
-    const n = clients().filter((c) => planFor(c).p?.id === p.id).length, sessions = p.weeks.reduce((a, w) => a + w.days.length, 0);
-    return `<tr><td><button class="th-title" data-act="open-program" data-id="${p.id}">${tile(p.name)}<span>${esc(p.name)}</span></button></td>
-      <td class="num">${p.weeks.length}</td><td class="num">${sessions}</td><td class="num">${n}</td><td class="small muted th-desc">${esc(p.note || "")}</td></tr>`;
-  }).join("");
-  return `<div class="th-libhead"><h1>Programs</h1><span class="row">${D.progReady ? `<button class="btn" data-act="open-exlib">Exercises (${D.exercises.length})</button>` : ""}${libraryPrograms().length ? "" : '<button class="btn" data-act="example-program">Start from an example block</button>'}<button class="btn primary" data-act="new-program">Create Program</button></span></div>
-    ${rows ? `<div class="th-tablewrap"><table class="th-table"><thead><tr><th>Title</th><th>Weeks</th><th>Sessions</th><th>Athletes</th><th>Description</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="empty">No programs yet. Create one to start building.</div>'}
-    ${ui.newProg ? newProgramModal() : ""}`;
+  const tab = ui.libTab || "programs", L = libState(tab), sel = ui.libSel || (ui.libSel = new Set());
+  const usage = new Map();
+  if (tab === "programs") for (const c of clients()) { const id = planFor(c).p?.id; if (id) usage.set(id, (usage.get(id) || 0) + 1); }
+  const cols = libCols(tab, usage), all = libRows(tab), tagged = ["exercises", "circuits", "prescriptions"].includes(tab);
+  const needsDb = !D.libReady && tab !== "programs";
+  const rows = filterRows(all, { q: L.q, tag: L.tag, title: (r) => rowTitle(tab, r), tags: (r) => rowTags(tab, r) });
+  const col = cols.find((c) => c.k === L.sort && c.get) || cols[0];
+  const pg = pageOf(sortRows(rows, (r) => col.get(r), L.dir), L.page);
+  const createLabel = { programs: "Create Program", sessions: "Create Session Template", exercises: "Create Exercise", circuits: "Create Circuit", prescriptions: "Create Prescription" }[tab];
+  const tagWord = tab === "prescriptions" ? "categories" : "tags";
+  const bar = `<div class="lib-bar">${tagged && !needsDb ? `<select class="t mini" data-change="lib-tag" aria-label="Filter by ${tagWord}"><option value="">All ${tagWord}</option>${tagCounts(all, (r) => rowTags(tab, r)).map(([t, n]) => `<option value="${esc(t)}"${t.toLowerCase() === L.tag.toLowerCase() ? " selected" : ""}>${esc(t)} (${n})</option>`).join("")}</select>` : "<span></span>"}
+    <span class="row nowrap"><button class="th-ib" data-act="lib-del" title="Delete selected" aria-label="Delete selected"${sel.size ? "" : " disabled"}>${ico("trash")}</button>
+    ${tab === "prescriptions" ? "" : `<label class="lib-search">${ico("search")}<input class="t" id="lib-q" type="search" data-input="lib-q" value="${esc(L.q)}" placeholder="Search" aria-label="Search ${tab} by title" autocomplete="off"></label>`}
+    ${tab === "programs" && !all.length ? '<button class="btn" data-act="example-program">Start from an example block</button>' : ""}<button class="btn primary" data-act="lib-create"${needsDb ? " disabled" : ""}>${createLabel}</button></span></div>`;
+  const allOn = pg.rows.length && pg.rows.every((r) => sel.has(r.id));
+  const table = pg.rows.length ? `<div class="th-tablewrap"><table class="th-table lib-table"><thead><tr><th class="lib-ck"><input type="checkbox" data-change="lib-all" aria-label="Select every row on this page"${allOn ? " checked" : ""}></th>${cols.map((c) => c.get
+      ? `<th${c.num ? ' class="num"' : ""}${L.sort === c.k ? ` aria-sort="${L.dir === "asc" ? "ascending" : "descending"}"` : ""}><button class="lib-sort" data-act="lib-sort" data-v="${c.k}">${c.label}${L.sort === c.k ? ico(L.dir === "asc" ? "up" : "down") : ""}</button></th>`
+      : `<th>${c.label}</th>`).join("")}</tr></thead>
+    <tbody>${pg.rows.map((r) => `<tr><td class="lib-ck"><input type="checkbox" data-change="lib-sel" data-id="${r.id}" aria-label="Select ${esc(rowTitle(tab, r))}"${sel.has(r.id) ? " checked" : ""}></td>${cols.map((c) => `<td${c.num ? ' class="num"' : ""}>${c.cell ? c.cell(r) : esc(c.get(r))}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+    <div class="lib-pager"><span class="small muted num">${pg.from}-${pg.to} of ${pg.total}</span><button class="th-ib" data-act="lib-page" data-v="-1" aria-label="Previous page"${pg.page ? "" : " disabled"}>${ico("left")}</button><button class="th-ib" data-act="lib-page" data-v="1" aria-label="Next page"${pg.page < pg.pages - 1 ? "" : " disabled"}>${ico("right")}</button></div>`
+    : `<div class="empty">${needsDb ? "This part of the library needs one database update first: paste run-0019-library.sql into Supabase's SQL editor and press Run." : L.q || L.tag ? "Nothing matches. Clear the search or the filter." : { programs: "No programs yet. Create one to start building.", sessions: "No session templates yet. Create one here, or open any session in a program and use Save to Library.", exercises: "No exercises yet.", circuits: "No circuits yet.", prescriptions: "No prescriptions yet. Save a set table from any exercise, or create one here." }[tab]}</div>`;
+  return `<div class="th-libhead"><h1>Library</h1></div>
+    <nav class="lib-tabs" role="tablist" aria-label="Library">${LIB_TABS.map(([k, l]) => `<button role="tab" data-act="lib-tab" data-v="${k}" aria-selected="${k === tab}">${l}</button>`).join("")}</nav>
+    ${bar}${table}${ui.newProg ? newProgramModal() : ""}${libDrawer()}`;
+}
+
+// The right-hand drawer: one form per item type, edited as a draft until Save.
+function libDrawer() {
+  const dr = ui.drawer; if (!dr) return "";
+  const body = dr.kind === "exercise" ? exDrawer(dr.d) : dr.kind === "circuit" ? circDrawer(dr.d) : rxDrawer(dr.d);
+  return `<div class="dr-scrim" data-act="dr-cancel"></div><aside class="dr" role="dialog" aria-modal="true" aria-labelledby="dr-h">${body}</aside>`;
+}
+const drHead = (t) => `<div class="dr-head"><h2 id="dr-h">${t}</h2><button class="th-ib" data-act="dr-cancel" aria-label="Close">${ico("x")}</button></div>`;
+const drFoot = (t) => `<div class="dr-foot"><button class="link" data-act="dr-cancel">Cancel</button><button class="btn primary" data-act="dr-save">${t}</button></div>`;
+const paramSel = (k, cur, req, rerender) => `<select class="t" id="dr-${k}" data-dr="${k}"${rerender ? ' data-rerender="1"' : ""}>${PARAMS.filter((p) => p || !req).map((p) => `<option value="${esc(p)}"${p === (cur || "") ? " selected" : ""}>${p || "-"}</option>`).join("")}</select>`;
+const drCount = (k, v) => `<span class="count num" id="dr-cnt-${k}">${String(v || "").length}/10000</span>`;
+function tagBox(list, opts, label, placeholder) {
+  const have = new Set(list.map((t) => t.toLowerCase()));
+  return `<div class="f"><span>${label}</span>${list.length ? `<div class="lib-chips">${list.map((t, i) => `<span class="lib-chip">${esc(t)}<button data-act="dr-untag" data-i="${i}" aria-label="Remove ${esc(t)}">${ico("x")}</button></span>`).join("")}</div>` : ""}
+    <input class="t" id="dr-tag" list="dr-tags" placeholder="${placeholder}" autocomplete="off" aria-label="Add to ${label}"><datalist id="dr-tags">${[...new Set(opts)].filter((o) => !have.has(o.toLowerCase())).map((o) => `<option value="${esc(o)}">`).join("")}</datalist></div>`;
+}
+const customTags = (rows, stock) => tagCounts(rows).map(([t]) => t).filter((t) => !stock.some((s) => s.toLowerCase() === t.toLowerCase()));
+function exDrawer(d) {
+  const lite = !D.libReady;
+  return `${drHead(d.id ? "Edit Exercise" : "Create Exercise")}<div class="dr-body stack">
+    <label class="f">Title<input class="t" id="dr-name" data-dr="name" maxlength="80" value="${esc(d.name)}" placeholder="Exercise title"></label>
+    ${lite ? "" : `<h3 class="dr-sec">Default Parameters</h3><div class="grid2"><label class="f">Parameter 1${paramSel("param1", d.param1, true)}</label><label class="f">Parameter 2${paramSel("param2", d.param2)}</label></div>`}
+    <h3 class="dr-sec">Video</h3>
+    <label class="f">YouTube or Vimeo link<input class="t" type="url" id="dr-url" data-dr="demo_url" value="${esc(d.demo_url)}" placeholder="https://"></label>
+    <div class="row"><label class="btn small" for="xl-file">Or upload a video</label><input id="xl-file" type="file" accept="video/*" hidden><span class="small muted" id="xl-file-name">${esc(ui.demoFile?.name || "")}</span>${d.demo_path ? `<button class="btn small ghost" data-act="demo" data-path="${esc(d.demo_path)}">Watch uploaded video</button>` : ""}${d.demo_url ? `<a class="btn small ghost" href="${esc(d.demo_url)}" target="_blank" rel="noopener">Open link</a>` : ""}</div><div class="demo-vid"></div>
+    ${lite ? "" : `<h3 class="dr-sec">Suggested Swaps <span class="muted small">(max 3)</span></h3>${[0, 1, 2].map((i) => `<input class="t" list="dr-names" data-dr="swap" data-i="${i}" value="${esc(d.swaps[i] || "")}" placeholder="Swap ${i + 1}" aria-label="Suggested swap ${i + 1}">`).join("")}`}
+    <div class="row spread"><h3 class="dr-sec">Points of Performance</h3>${drCount("cues", d.cues)}</div>
+    <textarea class="th-ta" data-dr="cues" maxlength="10000" placeholder="Cues the athlete sees with the demo.">${esc(d.cues)}</textarea>
+    ${lite ? '<p class="small muted">Tags, swaps, parameters and reference max arrive with the library database update (run-0019-library.sql).</p>' : `${tagBox(d.tags, [...STOCK_TAGS, ...customTags(D.exercises, STOCK_TAGS)], "Tags", "Add a tag")}
+    <label class="f">Reference Max<input class="t" list="dr-names" data-dr="ref_max" value="${esc(d.ref_max)}" placeholder="${esc(d.name || "This exercise")}"><span class="small muted">When loads are prescribed in %, the working max of this exercise is referenced.</span></label>
+    <label class="f">Track As<input class="t" list="dr-names" data-dr="track_as" value="${esc(d.track_as)}" placeholder="${esc(d.name || "This exercise")}"><span class="small muted">Sets logged on this exercise count towards that exercise's charts and PRs.</span></label>
+    <datalist id="dr-names">${D.exercises.filter((x) => x.id !== d.id).map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist>`}
+  </div>${drFoot("Save Exercise")}`;
+}
+function circDrawer(d) {
+  const withVid = D.exercises.filter(hasVideo).map((x) => x.name);
+  return `${drHead(d.id ? "Edit Circuit" : "Create Circuit")}<div class="dr-body stack">
+    <label class="f">Title<input class="t" id="dr-title" data-dr="title" maxlength="120" value="${esc(d.title)}" placeholder="Circuit title"></label>
+    <div class="row spread"><h3 class="dr-sec">Instructions</h3>${drCount("instructions", d.instructions)}</div>
+    <textarea class="th-ta" data-dr="instructions" maxlength="10000" placeholder="EX.&#10;3 Rounds for Time&#10;400m Run&#10;21 Kettlebell Swings 24/16kg">${esc(d.instructions)}</textarea>
+    <label class="f">Results<select class="t" data-dr="results" aria-label="Select leaderboard">${CIRCUIT_RESULTS.map((r) => `<option${r === d.results ? " selected" : ""}>${r}</option>`).join("")}</select></label>
+    ${tagBox(d.tags, [...STOCK_TAGS, ...customTags(libOf("circuit"), STOCK_TAGS)], "Tags", "Add a tag")}
+    <div class="f"><span>Videos</span>${d.videos.length ? `<div class="lib-chips">${d.videos.map((v, i) => `<span class="lib-chip">${esc(v)}<button data-act="dr-unvid" data-i="${i}" aria-label="Remove ${esc(v)}">${ico("x")}</button></span>`).join("")}</div>` : ""}
+      <input class="t" id="dr-vid" list="dr-vids" placeholder="${withVid.length ? "Add an exercise video" : "No exercises have a video yet"}" autocomplete="off" aria-label="Add an exercise video"${withVid.length ? "" : " disabled"}><datalist id="dr-vids">${withVid.filter((n) => !d.videos.includes(n)).map((n) => `<option value="${esc(n)}">`).join("")}</datalist></div>
+  </div>${drFoot("Save Circuit")}`;
+}
+const sameRx = (a, b) => a.param1 === b.param1 && (a.param2 || "") === (b.param2 || "") && JSON.stringify((a.rows || []).map((r) => [String(r.reps).trim(), String(r.val).trim()])) === JSON.stringify((b.rows || []).map((r) => [String(r.reps).trim(), String(r.val).trim()]));
+function rxDrawer(d) {
+  const dup = libOf("prescription").find((r) => r.id !== d.id && sameRx(r.data || {}, d));
+  return `${drHead(d.id ? "Edit Prescription" : "Create Prescription")}<div class="dr-body stack">
+    <div class="th-rx" id="dr-rxt">${esc(rxTitle(d))}</div>
+    <div class="grid3"><label class="f">Sets<select class="t" data-change="dr-sets">${Array.from({ length: 10 }, (_, i) => `<option${i + 1 === d.rows.length ? " selected" : ""}>${i + 1}</option>`).join("")}</select></label>
+      <label class="f">Parameter 1${paramSel("param1", d.param1, true, true)}</label><label class="f">Parameter 2${paramSel("param2", d.param2, false, true)}</label></div>
+    <table class="sets th"><thead><tr><th class="num">Set</th><th>${esc(d.param1)}</th>${d.param2 ? `<th>${esc(d.param2)}</th>` : ""}</tr></thead>
+      <tbody>${d.rows.map((r, i) => `<tr><td class="num muted">${i + 1}</td><td><input class="t num" data-dr="rx" data-i="${i}" data-f="reps" value="${esc(r.reps)}" aria-label="Set ${i + 1} ${esc(d.param1)}"></td>${d.param2 ? `<td><input class="t num" data-dr="rx" data-i="${i}" data-f="val" value="${esc(r.val)}" aria-label="Set ${i + 1} ${esc(d.param2)}"></td>` : ""}</tr>`).join("")}</tbody></table>
+    ${tagBox(d.tags, [...RX_CATEGORIES, ...customTags(libOf("prescription"), RX_CATEGORIES)], "Category", "Add a category")}
+    ${dup ? '<p class="small">This prescription is already in the library.</p>' : ""}
+  </div>${drFoot("Save Prescription")}`;
+}
+const newEx = () => ({ name: "", param1: "Reps", param2: "Weight (kg)", demo_url: "", demo_path: null, swaps: ["", "", ""], cues: "", tags: [], ref_max: "", track_as: "" });
+const exDraft = (x) => ({ ...newEx(), ...structuredClone(x), param1: x.param1 || "Reps", param2: x.param2 ?? "Weight (kg)", swaps: [...(x.swaps || []), "", "", ""].slice(0, 3), tags: [...(x.tags || [])], cues: x.cues || "", demo_url: x.demo_url || "", ref_max: x.ref_max || "", track_as: x.track_as || "" });
+const circDraft = (it) => ({ id: it?.id, created_by: it?.created_by, title: it?.title || "", instructions: it?.data?.instructions || "", results: it?.data?.results || "For Completion", tags: [...(it?.tags || [])], videos: [...(it?.data?.videos || [])] });
+const blankRows = (n) => Array.from({ length: n }, () => ({ reps: "", val: "" }));
+const rxDraft = (it) => ({ id: it?.id, created_by: it?.created_by, param1: it?.data?.param1 || "Reps", param2: it?.data?.param2 ?? "Weight (%)", rows: structuredClone(it?.data?.rows?.length ? it.data.rows : blankRows(3)), tags: [...(it?.tags || [])] });
+function drInput(t) {
+  const d = ui.drawer?.d, k = t.dataset.dr; if (!d) return;
+  if (k === "swap") d.swaps[+t.dataset.i] = t.value;
+  else if (k === "rx") {
+    // Like the builder's set table: a value fills every set below it.
+    const i = +t.dataset.i, f = t.dataset.f; d.rows = autofill(d.rows, i, f, t.value);
+    d.rows.forEach((r, j) => { if (j > i) { const el = document.querySelector(`[data-dr="rx"][data-i="${j}"][data-f="${f}"]`); if (el) el.value = r[f]; } });
+  }
+  else d[k] = t.value;
+  const c = document.getElementById(`dr-cnt-${k}`); if (c) c.textContent = `${t.value.length}/10000`;
+  const h = document.getElementById("dr-rxt"); if (h) h.textContent = rxTitle(d);
+}
+function drAddTag(t, key) {
+  const d = ui.drawer?.d, v = t.value.trim(); if (!d || !v) return;
+  if (key === "videos") { if (!d.videos.includes(v) && D.exercises.some((x) => x.name === v)) d.videos.push(v); }
+  else d.tags = cleanTags([...d.tags, v]);
+  ui.focus = t.id; render();
+}
+async function drSave(btn) {
+  const dr = ui.drawer, d = dr.d, by = d.created_by || myName();
+  if (dr.kind === "exercise") {
+    const name = d.name.trim(), url = d.demo_url.trim();
+    if (!name) return toast("Give the exercise a title.");
+    const dup = D.exercises.find((x) => x.id !== d.id && exKey(x.name) === exKey(name));
+    if (dup) return toast(`${dup.name} is already in the library.`);
+    if (url && !/^https:\/\//i.test(url)) return toast("The video link needs to start with https://");
+    btn.disabled = true;
+    let demo_path = d.demo_path || null, up = null;
+    try {
+      if (ui.demoFile) { const f = await prepareVideo(ui.demoFile, (t) => (btn.textContent = t)); btn.textContent = "Uploading..."; up = demo_path = await api.uploadDemo(me.id, f, name); }
+      const x = { id: d.id, name, demo_url: url, demo_path, cues: d.cues.trim() };
+      if (D.libReady) Object.assign(x, { param1: d.param1, param2: d.param2, tags: cleanTags(d.tags), swaps: cleanSwaps(d.swaps), ref_max: d.ref_max.trim(), track_as: d.track_as.trim(), created_by: by });
+      const row = await api.saveExercise(x);
+      if (up && d.demo_path && d.demo_path !== up) api.removeFile(d.demo_path).catch(() => {});
+      D.exercises = [...D.exercises.filter((y) => y.id !== row.id), row].sort(byName); pickNames = null;
+      ui.demoFile = null; ui.drawer = null; render(); toast(`${name} saved.`);
+    } catch (e) { if (up) api.removeFile(up).catch(() => {}); btn.disabled = false; btn.textContent = "Save Exercise"; fail(e, "Exercise"); }
+    return;
+  }
+  const it = dr.kind === "circuit"
+    ? { id: d.id, kind: "circuit", title: d.title.trim(), tags: cleanTags(d.tags), data: { instructions: d.instructions, results: d.results, videos: d.videos }, created_by: by }
+    : { id: d.id, kind: "prescription", title: rxTitle(d) || "Prescription", tags: cleanTags(d.tags), data: { param1: d.param1, param2: d.param2, rows: d.rows.map((r) => ({ reps: String(r.reps).trim(), val: String(r.val).trim() })) }, created_by: by };
+  if (!it.title) return toast("Give the circuit a title.");
+  btn.disabled = true;
+  try { await keepLibItem(it); ui.drawer = null; render(); toast(`${it.title} saved.`); }
+  catch (e) { btn.disabled = false; fail(e, dr.kind === "circuit" ? "Circuit" : "Prescription"); }
+}
+async function keepLibItem(it) {
+  const row = await api.saveLibItem(it);
+  D.libItems = [...(D.libItems || []).filter((x) => x.id !== row.id), row];
+  return row;
+}
+// Session templates open in the session builder, as a one-session program that saves to the library.
+function openTemplate(it) {
+  const day = it ? { exercises: [], coachNote: "", ...structuredClone(it.data), dow: 1 } : { name: "", coachNote: "", exercises: [] };
+  day.id ||= newId(); day.dow = 1;
+  ui.tplProg = { id: "tpl", tpl: true, name: "Session template", itemId: it?.id || null, created_by: it?.created_by || "", weeks: [{ days: [day] }] };
+  go(() => { ui.programId = "tpl"; ui.week = 0; ui.sess = { w: 0, id: day.id }; ui.view = "session"; ui.drawer = null; });
+  scrollTo(0, 0);
+}
+async function saveTpl(p) {
+  const day = p.weeks[0].days[0]; if (!day) return;
+  p.dirty = false;
+  const row = await keepLibItem({ id: p.itemId, kind: "session", title: (day.name || "").trim().slice(0, 120) || "Untitled session", tags: [], data: day, created_by: p.created_by || myName() });
+  p.itemId = row.id;
+}
+const queueTpl = (p) => (p.saving = (p.saving || Promise.resolve()).catch(() => {}).then(() => saveTpl(p)));
+// Pick a session template to drop onto a day ("Add from library").
+function tplModal() {
+  const a = ui.addTpl;
+  return `<div class="th-scrim"><div class="th-modal" role="dialog" aria-modal="true" aria-labelledby="tp-h"><h2 id="tp-h">Add from Library</h2>
+    <input class="t" id="tpl-q" type="search" data-input="tpl-q" placeholder="Search session templates" value="${esc(a.q || "")}" autocomplete="off" aria-label="Search session templates">
+    <div class="tpl-list" id="tpl-list">${tplList(a.q)}</div>
+    <div class="row th-modal-foot"><button class="link" data-act="tpl-cancel">Cancel</button></div></div></div>`;
+}
+function tplList(q) {
+  const rows = sortRows(filterRows(libOf("session"), { q: q || "" }), (r) => r.title);
+  return rows.map((r) => `<button class="item" data-act="tpl-add" data-id="${r.id}"><div class="row spread"><strong>${esc(r.title)}</strong><span class="small muted">${(r.data?.exercises || []).length} blocks</span></div></button>`).join("") || '<p class="small muted">No session templates match.</p>';
 }
 function newProgramModal() {
   const n = ui.newProg;
@@ -588,7 +809,7 @@ function sessCard(wi, day, current) {
   return `<div class="sess-box${picked ? " picked" : ""}" draggable="true" data-w="${wi}" data-id="${day.id}"><button class="sess${current ? " on" : ""}" data-act="open-sess" ${at}><span class="sess-top">${tile(day.name)}<span class="sess-name">${esc(day.name || "Session")}</span></span>
     ${ui.showIns && day.coachNote ? `<span class="sx-ins">${esc(day.coachNote)}</span>` : ""}${items}${day.exercises.length ? "" : '<span class="muted small">No blocks yet</span>'}</button>
     <details class="kebab"><summary aria-label="Options for ${esc(day.name || "session")}">&#8942;</summary><div class="kmenu">
-      <button data-act="open-sess" ${at}>Edit</button><button data-act="card-repeat" ${at}>Repeat</button><button data-act="card-copy" ${at}>Copy</button><button class="danger" data-act="card-del" ${at}>Delete</button></div></details></div>`;
+      <button data-act="open-sess" ${at}>Edit</button><button data-act="card-repeat" ${at}>Repeat</button><button data-act="card-copy" ${at}>Copy</button><button data-act="card-savetpl" ${at}>Save to Library</button><button class="danger" data-act="card-del" ${at}>Delete</button></div></details></div>`;
 }
 const TROPHY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3M12 14v4M8 21h8M9 18h6"/></svg>';
 const clipSessions = () => { const c = clip.get(); return c?.kind === "sessions" ? c.data : c?.kind === "session" ? [{ dw: 0, dc: 0, day: c.data }] : null; };
@@ -596,7 +817,7 @@ function vProgramEdit() {
   const p = program(ui.programId);
   if (!p) { ui.view = null; return vPrograms(); }
   if (!p.weeks.length) p.weeks.push({ days: [] });
-  const cs = clipSessions(), cw = clip.get()?.kind === "week";
+  const cs = clipSessions(), cw = clip.get()?.kind === "week", fromLib = D.libReady && libOf("session").length;
   let out = `${clipBar()}<div class="row spread"><button class="link" data-act="back">${p.owner_id ? "Back to athlete" : "Back to programs"}</button><span class="save-pill" id="save-state">${ui.saveState || "Saved"}</span></div>
     ${p.owner_id ? `<div class="kicker">Program just for ${esc(profile(p.owner_id)?.name || "one athlete")}</div>` : ""}
     <div class="th-sub"><span class="row">${tile(p.name)}<strong class="th-pname">${esc(p.name)}</strong><span class="muted">${p.weeks.length} Week Program</span></span>
@@ -610,7 +831,7 @@ function vProgramEdit() {
     out += `<div class="pg-week"><h2>Week ${wi + 1}</h2><span class="pg-wk-acts"><button class="link small" data-act="clip-week" data-w="${wi}">Copy week</button>${cw ? `<button class="link small" data-act="paste-week" data-w="${wi}">Paste week after</button>` : ""}<button class="link small" data-act="dup-week" data-w="${wi}">Copy to new week</button>${p.weeks.length > 1 ? `<button class="link small danger" data-act="del-week" data-w="${wi}">Delete week</button>` : ""}</span></div>`;
     out += DAY_ORDER.map((dow) => { const here = w.days.filter((d) => d.dow === dow);
       return `<div class="pg-cell${here.length ? "" : " empty-day"}" data-w="${wi}" data-dow="${dow}">${here.map((d) => sessCard(wi, d)).join("")}
-      <span class="pg-hover">${here.length ? `<button data-act="open-sess" data-w="${wi}" data-id="${here[0].id}">Edit</button><button data-act="sess-add" data-w="${wi}" data-dow="${dow}">Add session</button>` : `<button data-act="sess-add" data-w="${wi}" data-dow="${dow}" aria-label="Create session, week ${wi + 1} day ${dayNum(dow)}">Create session</button>`}${cs ? `<button data-act="paste-sess" data-w="${wi}" data-dow="${dow}">Paste ${cs.length} session${cs.length === 1 ? "" : "s"}</button>` : ""}</span></div>`; }).join("");
+      <span class="pg-hover">${here.length ? `<button data-act="open-sess" data-w="${wi}" data-id="${here[0].id}">Edit</button><button data-act="sess-add" data-w="${wi}" data-dow="${dow}">Add session</button>` : `<button data-act="sess-add" data-w="${wi}" data-dow="${dow}" aria-label="Create session, week ${wi + 1} day ${dayNum(dow)}">Create session</button>`}${fromLib ? `<button data-act="tpl-pick" data-w="${wi}" data-dow="${dow}">Add from library</button>` : ""}${cs ? `<button data-act="paste-sess" data-w="${wi}" data-dow="${dow}">Paste ${cs.length} session${cs.length === 1 ? "" : "s"}</button>` : ""}</span></div>`; }).join("");
   });
   out += `</div></div><div class="row"><button class="btn" data-act="add-week">Add a week</button>${cw ? `<button class="btn" data-act="paste-week" data-w="${p.weeks.length - 1}">Paste ${esc(clip.get().label)} at the end</button>` : ""}</div>
     <p class="small muted">Drag a session to move it. Drag a box around sessions to repeat, copy or delete them. Right-click a day to copy or paste.</p>`;
@@ -620,6 +841,7 @@ function vProgramEdit() {
     out += `<div class="kmenu th-ctx" style="left:${k.x}px;top:${k.y}px"><button data-act="ctx-copy"${n ? "" : " disabled"}>Copy ${n} Session${n === 1 ? "" : "s"}</button><button data-act="paste-sess" data-w="${k.w}" data-dow="${k.dow}"${cs ? "" : " disabled"}>Paste ${cs?.length || 0} Session${cs?.length === 1 ? "" : "s"}</button><button class="danger" data-act="ctx-del"${n ? "" : " disabled"}>Delete ${n} Session${n === 1 ? "" : "s"}</button></div>`;
   }
   if (ui.repeat) out += repeatModal(p);
+  if (ui.addTpl) out += tplModal();
   return out;
 }
 // Repeat: one session through a later week on chosen days, or a selection forward N times.
@@ -651,20 +873,21 @@ function vSession() {
   const p = program(ui.programId), s = ui.sess;
   if (!p || !s || !p.weeks[s.w]) { ui.view = p ? "program" : null; return p ? vProgramEdit() : vPrograms(); }
   const wk = p.weeks[s.w], day = wk.days.find((d) => d.id === s.id), dow = day ? day.dow : s.dow, di = wk.days.indexOf(day);
-  const sameDay = wk.days.filter((d) => d.dow === dow), cs = clipSessions(), cb = clip.get();
-  const cal = p.weeks.map((w, wi) => `<div class="cal-wk"><span class="kicker">Week ${wi + 1}</span><div class="cal-row">${DAY_ORDER.map((dd) => {
+  const sameDay = wk.days.filter((d) => d.dow === dow), cs = clipSessions(), cb = clip.get(), tpl = !!p.tpl;
+  const cal = tpl ? "" : p.weeks.map((w, wi) => `<div class="cal-wk"><span class="kicker">Week ${wi + 1}</span><div class="cal-row">${DAY_ORDER.map((dd) => {
     const n = w.days.filter((d) => d.dow === dd).length;
     return `<button class="cal-d num" data-act="sess-day" data-w="${wi}" data-dow="${dd}"${wi === s.w && dd === dow ? ' aria-current="true"' : ""} aria-label="Week ${wi + 1} day ${dayNum(dd)}, ${n} session${n === 1 ? "" : "s"}">${wi * 7 + dayNum(dd)}<span class="dots">${"&bull;".repeat(Math.min(n, 3))}</span></button>`; }).join("")}</div></div>`).join("");
-  let out = `<div class="sess-layout"><aside class="sess-side"><div class="cal">${cal}</div>
-    <div class="stack"><h2>Session Preview</h2><span class="kicker">Day ${s.w * 7 + dayNum(dow)}</span>${sameDay.map((d) => previewOf(d, d === day)).join("") || '<p class="small muted">Rest day</p>'}</div></aside>
+  let out = `<div class="sess-layout"><aside class="sess-side">${tpl ? "" : `<div class="cal">${cal}</div>`}
+    <div class="stack"><h2>Session Preview</h2>${tpl ? "" : `<span class="kicker">Day ${s.w * 7 + dayNum(dow)}</span>`}${sameDay.map((d) => previewOf(d, d === day)).join("") || '<p class="small muted">Rest day</p>'}</div></aside>
     <div class="sess-main stack">${clipBar()}
-    <div class="row spread"><button class="link" data-act="back">${ui.calBack ? "Back to calendar" : "Back To Program"}</button><span class="save-pill" id="save-state">${ui.saveState || "Saved"}</span></div>
-    <div class="row spread th-h1"><h1>Week ${s.w + 1} Day ${dayNum(dow)}</h1>${day ? `<span class="row"><button class="th-ib" data-act="clip-sess" data-d="${di}" aria-label="Copy session" title="Copy session">${ico("copy")}</button><button class="th-ib" data-act="sess-del" data-d="${di}" aria-label="Delete session" title="Delete session">${ico("trash")}</button></span>` : ""}</div>`;
-  const addSess = `<button class="btn th-big" data-act="sess-add" data-w="${s.w}" data-dow="${dow}">Add New Session</button>${cs ? `<button class="btn th-big" data-act="paste-sess" data-w="${s.w}" data-dow="${dow}">Paste ${cs.length} session${cs.length === 1 ? "" : "s"}</button>` : ""}`;
-  if (!day) return out + `<div class="empty stack"><strong>Scheduled Rest Day</strong><div class="row th-adds">${addSess}</div></div></div></div>`;
+    <div class="row spread"><button class="link" data-act="back">${tpl ? "Back To Library" : ui.calBack ? "Back to calendar" : "Back To Program"}</button><span class="save-pill" id="save-state">${ui.saveState || "Saved"}</span></div>
+    <div class="row spread th-h1"><h1>${tpl ? "Session Template Form" : `Week ${s.w + 1} Day ${dayNum(dow)}`}</h1>${day ? `<span class="row"><button class="th-ib" data-act="clip-sess" data-d="${di}" aria-label="Copy session" title="Copy session">${ico("copy")}</button>${tpl ? "" : `<button class="th-ib" data-act="card-savetpl" data-w="${s.w}" data-id="${day.id}" aria-label="Save to Library" title="Save to Library">${ico("book")}</button>`}${tpl ? "" : `<button class="th-ib" data-act="sess-del" data-d="${di}" aria-label="Delete session" title="Delete session">${ico("trash")}</button>`}</span>` : ""}</div>`;
+  const fromLib = D.libReady && libOf("session").length ? `<button class="btn th-big" data-act="tpl-pick" data-w="${s.w}" data-dow="${dow}">Add from Library</button>` : "";
+  const addSess = tpl ? "" : `<button class="btn th-big" data-act="sess-add" data-w="${s.w}" data-dow="${dow}">Add New Session</button>${fromLib}${cs ? `<button class="btn th-big" data-act="paste-sess" data-w="${s.w}" data-dow="${dow}">Paste ${cs.length} session${cs.length === 1 ? "" : "s"}</button>` : ""}`;
+  if (!day) return out + `<div class="empty stack"><strong>Scheduled Rest Day</strong><div class="row th-adds">${addSess}</div></div></div></div>${ui.addTpl ? tplModal() : ""}`;
   if (sameDay.length > 1) out += `<div class="seg" role="group" aria-label="Sessions on this day">${sameDay.map((d) => `<button data-act="open-sess" data-w="${s.w}" data-id="${d.id}" aria-pressed="${d === day}">${esc(d.name || "Session")}</button>`).join("")}</div>`;
-  out += `<label class="th-name">${tile(day.name)}<input class="th-sname" id="d-name-${day.id}" list="streams" data-input="d-name" data-d="${di}" value="${esc(day.name)}" placeholder="Week ${s.w + 1} Day ${dayNum(dow)}" aria-label="Session name"><span class="th-pen">${ico("pencil")}</span></label>
-    <section class="th-card"><div class="row spread"><strong>Coach Instructions</strong><span class="count num" id="cnt-d-${day.id}">${(day.coachNote || "").length}/10000</span></div>
+  out += `<label class="th-name">${tile(day.name)}<input class="th-sname" id="d-name-${day.id}" list="streams" data-input="d-name" data-d="${di}" value="${esc(day.name)}" placeholder="${tpl ? "Session Title" : `Week ${s.w + 1} Day ${dayNum(dow)}`}" aria-label="${tpl ? "Session title" : "Session name"}"><span class="th-pen">${ico("pencil")}</span></label>
+    <section class="th-card"><div class="row spread"><strong>${tpl ? "Session Instructions" : "Coach Instructions"}</strong><span class="count num" id="cnt-d-${day.id}">${(day.coachNote || "").length}/10000</span></div>
       <textarea class="th-ta" id="d-note-${day.id}" maxlength="10000" data-input="d-note" data-d="${di}" data-count="cnt-d-${day.id}" placeholder="Use this area to help the athlete understand goals for today's session.">${esc(day.coachNote)}</textarea></section>`;
   const exs = day.exercises, labels = blockLabels(exs);
   groupsOf(exs).forEach(([a, b]) => {
@@ -672,8 +895,8 @@ function vSession() {
     for (let i = a; i <= b; i++) out += (i > a ? chain(di, i, true) : "") + exRow(exs[i], di, i, labels[i], i === a, i === b, exs.length);
     out += `</section>${b < exs.length - 1 ? chain(di, b + 1, false) : ""}`;
   });
-  out += `<div class="th-adds"><button class="btn primary th-big" data-act="ex-add" data-d="${di}" title="Blocks are the building blocks of your session. They hold an exercise or a circuit; link blocks to make supersets.">Add Block</button>${cb?.kind === "block" ? `<button class="btn th-big" data-act="paste-block" data-d="${di}">Paste ${esc(cb.label)}</button>` : ""}<hr>${addSess}</div>
-    <datalist id="streams">${STREAMS.map((x) => `<option value="${x}">`).join("")}</datalist></div></div>`;
+  out += `<div class="th-adds"><button class="btn primary th-big" data-act="ex-add" data-d="${di}" title="Blocks are the building blocks of your session. They hold an exercise or a circuit; link blocks to make supersets.">Add Block</button>${cb?.kind === "block" ? `<button class="btn th-big" data-act="paste-block" data-d="${di}">Paste ${esc(cb.label)}</button>` : ""}${addSess ? `<hr>${addSess}` : ""}</div>
+    <datalist id="streams">${STREAMS.map((x) => `<option value="${x}">`).join("")}</datalist></div></div>${ui.addTpl ? tplModal() : ""}`;
   return out;
 }
 function blockHead(e, di, ei) {
@@ -681,7 +904,7 @@ function blockHead(e, di, ei) {
   return `<div class="blk-head"><select class="t mini th-cat" data-change="cat" ${attrs} aria-label="Block category" title="Change Block Category">${CATS.map((c) => `<option${c === cat ? " selected" : ""}>${c}</option>`).join("")}</select>
     <input class="blk-title" id="x-section-${e.id}" data-input="ex" data-k="section" ${attrs} value="${esc(e.section)}" placeholder="Block title" aria-label="Block title" title="Change Block Title">
     <span class="row">${isCircuit(e) ? "" : `<span class="th-lb" title="Score this block">${TROPHY}${resultSelect(e, attrs, "Block result")}</span>`}
-    <details class="kebab"><summary aria-label="Block options">&#8943;</summary><div class="kmenu"><button data-act="clip-block" ${attrs}>Copy block</button><button class="danger" data-act="blk-del" ${attrs}>Delete block</button></div></details></span></div>`;
+    <details class="kebab"><summary aria-label="Block options">&#8943;</summary><div class="kmenu"><button data-act="clip-block" ${attrs}>Copy block</button>${isCircuit(e) ? `<button data-act="circ-savelib" ${attrs}>Save circuit to Library</button>` : ""}<button class="danger" data-act="blk-del" ${attrs}>Delete block</button></div></details></span></div>`;
 }
 const chain = (di, i, on) => `<div class="th-chain${on ? " on" : ""}"><button data-act="link" data-d="${di}" data-e="${i}" aria-label="${on ? "Remove superset" : "Create superset"}" title="${on ? "Remove superset" : "Create superset"}">${ico("link")}</button></div>`;
 function exRow(e, di, ei, label, first, last, n) {
@@ -700,7 +923,9 @@ function exRow(e, di, ei, label, first, last, n) {
     left = `${pick}<section class="th-card"><div class="row spread"><strong>Exercise Instructions</strong>${count("note")}</div>
       <textarea class="th-ta" id="x-note-${e.id}" maxlength="10000" data-input="ex" data-k="note" data-count="cnt-note-${e.id}" ${attrs} placeholder="Add cues for this session.">${esc(e.note)}</textarea></section>
       <div class="grid3 th-extra">${fld("Tempo", "tempo", e, di, ei, "", "text", "3-0-1-0")}${fld("Rest", "rest", e, di, ei, "", "text", "Rest 2 min")}${fld("Cue (in brackets)", "cue", e, di, ei, "", "text", "full depth")}</div>`;
+    const rxs = D.libReady ? libOf("prescription") : [];
     right = `<div class="th-rx" id="rx-${e.id}">${esc(rxSummary(e))}</div>
+      ${D.libReady ? `<div class="row th-rxlib">${rxs.length ? `<select class="t mini" data-change="rx-apply" ${attrs} aria-label="Apply a prescription from the library"><option value="">Prescriptions</option>${sortRows(rxs, (r) => r.title).map((r) => `<option value="${r.id}">${esc(r.title)}</option>`).join("")}</select>` : ""}<button class="link small" data-act="rx-save" ${attrs}>Save Prescription</button></div>` : ""}
       <table class="sets th"><thead><tr><th class="num">${rows.length} Sets</th><th>Reps</th><th><select class="t mini" id="x-metric-${e.id}" data-change="metric" ${attrs} aria-label="Second column">${METRICS.map((m) => `<option value="${m}"${(e.metric || "") === m ? " selected" : ""}>${MEASURE[m] || m}</option>`).join("")}</select></th></tr></thead>
       <tbody>${rows.map((r, ri) => `<tr><td class="num muted">${ri + 1}</td><td><input class="t num" id="r-${e.id}-${ri}-reps" data-input="row" data-f="reps" data-r="${ri}" ${attrs} value="${esc(r.reps)}" aria-label="Set ${ri + 1} reps"></td>
         <td>${e.metric ? `<input class="t num" id="r-${e.id}-${ri}-val" data-input="row" data-f="val" data-r="${ri}" ${attrs} value="${esc(r.val)}" aria-label="Set ${ri + 1} ${esc(MEASURE[e.metric] || e.metric)}">` : ""}</td></tr>`).join("")}</tbody></table>
@@ -715,6 +940,7 @@ function saveProgramSoon() {
   const p = program(ui.programId); if (!p) return;
   const show = (t) => { ui.saveState = t; document.querySelectorAll("#save-state").forEach((x) => { x.textContent = t; x.dataset.state = t; }); };
   show("Saving...");
+  if (p.tpl) { p.dirty = true; debounce("program", () => queueTpl(p).then(() => show("Saved")).catch((e) => { show("Not saved"); fail(e, "Session template"); })); return; }
   debounce("program", () => api.saveProgram(p).then(() => show("Saved")).catch((e) => { show("Not saved"); fail(e, "Program"); }));
 }
 
@@ -731,17 +957,30 @@ function pickList(input) {
   const q = exKey(input.value), all = allExNames();
   const hits = q ? all.filter((n) => exKey(n).includes(q)).sort((a, b) => (exKey(b).startsWith(q) - exKey(a).startsWith(q)) || a.length - b.length) : all;
   const box = input.nextElementSibling, shown = hits.slice(0, 60);
-  ui.pickAt = Math.min(ui.pickAt || 0, Math.max(shown.length - 1, 0));
-  box.innerHTML = `<div class="xl-count">${hits.length} exercise${hits.length === 1 ? "" : "s"} shown</div><div class="xl-items" role="listbox">${shown.map((n, i) => `<button type="button" role="option" class="xl-item${i === ui.pickAt ? " on" : ""}" data-pick-name="${esc(n)}" aria-selected="${i === ui.pickAt}">${esc(n)}${libFor(n) ? '<span class="xl-tag">Library</span>' : ""}</button>`).join("") || `<p class="small muted xl-none">No match. Press Enter to use "${esc(input.value.trim())}".</p>`}</div>
+  // Saved circuits come up too, like TrainHeroic's "Select Exercise or Circuit".
+  const circs = D.libReady ? sortRows(libOf("circuit").filter((c) => !q || exKey(c.title).includes(q)), (c) => c.title).slice(0, 20) : [];
+  const items = [...shown.map((n) => [`data-pick-name="${esc(n)}"`, n, libFor(n) ? "Library" : ""]), ...circs.map((c) => [`data-pick-circ="${c.id}"`, c.title, "Circuit"])];
+  ui.pickAt = Math.min(ui.pickAt || 0, Math.max(items.length - 1, 0));
+  box.innerHTML = `<div class="xl-count">${hits.length} exercise${hits.length === 1 ? "" : "s"}${circs.length ? `, ${circs.length} circuit${circs.length === 1 ? "" : "s"}` : ""} shown</div><div class="xl-items" role="listbox">${items.map(([at, n, tag], i) => `<button type="button" role="option" class="xl-item${i === ui.pickAt ? " on" : ""}" ${at} aria-selected="${i === ui.pickAt}">${esc(n)}${tag ? `<span class="xl-tag">${tag}</span>` : ""}</button>`).join("") || `<p class="small muted xl-none">No match. Press Enter to use "${esc(input.value.trim())}".</p>`}</div>
     <div class="xl-foot"><button type="button" data-pick-new="1">New Exercise</button><button type="button" data-pick-circuit="1">New Circuit</button></div>`;
   box.hidden = false; input.setAttribute("aria-expanded", "true");
 }
 function closePick(input) { const box = input?.nextElementSibling; if (box) box.hidden = true; input?.setAttribute("aria-expanded", "false"); ui.pickAt = 0; }
 async function choosePick(input, how) {
   const p = program(ui.programId), x = p.weeks[ui.week].days[+input.dataset.d].exercises[+input.dataset.e];
+  if (how?.circ) {
+    const it = libItem(how.circ); if (!it) return;
+    Object.assign(x, { kind: "circuit", name: it.title, cat: x.cat || "Conditioning", note: it.data?.instructions || "", score: resultTag(it.data?.results), metric: "", rows: undefined, sets: "", reps: "", target: "" });
+    closePick(input); ui.focus = `x-note-${x.id}`; render(); saveProgramSoon(); return;
+  }
   const name = how === "circuit" ? input.value.trim() || "Circuit" : how === "new" ? input.value.trim() : how;
   if (how === "circuit") Object.assign(x, { kind: "circuit", name, cat: x.cat || "Conditioning", metric: "", rows: undefined, sets: "", reps: "", target: "" });
-  else if (name) x.name = name;
+  else if (name) {
+    x.name = name;
+    // A fresh exercise takes its second set column from the library's Parameter 2.
+    const lib = libFor(name);
+    if (lib && "param2" in lib && !rowsOf(x).some((r) => String(r.reps ?? "").trim() || String(r.val ?? "").trim())) x.metric = metricOf(lib.param2);
+  }
   closePick(input); pickNames = null; ui.focus = how === "circuit" ? `x-note-${x.id}` : `r-${x.id}-0-reps`;
   render(); saveProgramSoon();
   if (how === "new" && name && D.progReady && !libFor(name)) {
@@ -1184,7 +1423,7 @@ async function sendChat(form) {
 }
 function logSummary(l) {
   const p = program(l.program_id), day = p?.weeks[l.week]?.days.find((d) => d.id === l.day_id);
-  const prs = l.done ? newPRs(l, clientLogs(l.client_id).filter((x) => x.date < l.date || (x.date === l.date && x.id < l.id)), nameOf) : [];
+  const prs = l.done ? newPRs(l, clientLogs(l.client_id).filter((x) => x.date < l.date || (x.date === l.date && x.id < l.id)), nameOf, trackName) : [];
   const lines = (l.entries || []).map((en) => {
     const e = { name: day?.exercises.find((x) => x.id === en.exId)?.name || en.name }; if (!e.name) return "";
     const ex = day?.exercises.find((x) => x.id === en.exId), unit = ex && VAL_METRICS.includes(ex.metric) ? " " + ex.metric.toLowerCase() : "";
@@ -1205,7 +1444,7 @@ const nameOf = (l, exId) => program(l.program_id)?.weeks[l.week]?.days.find((d) 
 const clientLogs = (cid) => D.logs.filter((l) => l.client_id === cid);
 const kgs = (n) => `${+n.toFixed(1)} kg`;
 function progressBox(cid) {
-  const sets = liftSets(clientLogs(cid), nameOf), ser = series(sets), recs = records(sets);
+  const sets = liftSets(clientLogs(cid), nameOf, trackName), ser = series(sets), recs = records(sets);
   if (!ser.size) return `<section class="stack"><div class="section-head"><h2>Progress</h2></div><div class="empty">Log sets with reps and kg and each lift's progress shows here.</div></section>`;
   const keys = [...ser.keys()].sort((a, b) => ser.get(b).points.length - ser.get(a).points.length || a.localeCompare(b));
   const pick = ui.progEx?.[cid] && ser.has(ui.progEx[cid]) ? ui.progEx[cid] : keys[0], s = ser.get(pick);
@@ -1478,40 +1717,6 @@ async function freshHistory(cid) {
   if (rows) D.prHistory = [...D.prHistory.filter((x) => x.client_id !== cid), ...rows];
 }
 
-/* ----- coach: exercise library ----- */
-function vExLib() {
-  return `<div class="row"><button class="link" data-act="back">Back to programs</button></div>
-    <section class="hero"><div class="kicker">Library</div><h1>Exercises</h1><p class="muted small">Add a demo for an exercise once and every athlete sees a Watch demo button wherever it's programmed. Names match what you type in programs.</p></section>
-    <section class="card stack"><h3>Add an exercise</h3>
-      <label class="f">Name<input class="t" id="xl-name" maxlength="80" placeholder="e.g. Bulgarian Split Squat"></label>
-      <label class="f">Demo link (optional)<input class="t" id="xl-url" type="url" placeholder="https://youtube.com/..."></label>
-      <div class="row"><label class="btn small" for="xl-file">Or upload a demo video</label><input id="xl-file" type="file" accept="video/*" hidden><span class="small muted" id="xl-file-name"></span></div>
-      <label class="f">Cues (optional)<textarea class="t" id="xl-cues" placeholder="Front foot flat, knee tracks over toes."></textarea></label>
-      <div class="row"><button class="btn primary" data-act="exlib-add">Add exercise</button><span class="small" id="xl-msg" role="status"></span></div></section>
-    ${D.exercises.length ? `<div class="list">${D.exercises.map((x) => `<div class="item static stack">
-      <div class="row spread"><strong>${esc(x.name)}</strong><span class="row">${x.demo_path ? `<button class="btn small ghost" data-act="demo" data-path="${esc(x.demo_path)}">Watch</button>` : ""}${x.demo_url ? `<a class="btn small ghost" href="${esc(x.demo_url)}" target="_blank" rel="noopener">Open link</a>` : ""}<button class="btn small danger" data-act="exlib-del" data-id="${x.id}">Delete</button></span></div>
-      <label class="f">Demo link<input class="t" type="url" data-change="exlib-field" data-k="demo_url" data-id="${x.id}" value="${esc(x.demo_url)}" placeholder="https://..."></label>
-      <label class="f">Cues<textarea class="t" data-change="exlib-field" data-k="cues" data-id="${x.id}">${esc(x.cues)}</textarea></label>
-      <div class="demo-vid"></div></div>`).join("")}</div>` : '<div class="empty">No exercises yet.</div>'}`;
-}
-async function addExercise() {
-  const name = document.getElementById("xl-name").value.trim(), url = document.getElementById("xl-url").value.trim();
-  const cues = document.getElementById("xl-cues").value.trim(), file = ui.demoFile, msg = document.getElementById("xl-msg");
-  if (!name) { msg.textContent = "Give it a name first."; return; }
-  if (url && !/^https:\/\//i.test(url)) { msg.textContent = "The link needs to start with https://"; return; }
-  if (libFor(name)) { msg.textContent = `${name} is already in the library. Edit it below.`; return; }
-  let demo_path = null;
-  try {
-    if (file) { const f = await prepareVideo(file, (t) => (msg.textContent = t)); msg.textContent = "Uploading..."; demo_path = await api.uploadDemo(me.id, f, name); }
-    const row = await api.saveExercise({ name, demo_url: url, demo_path, cues });
-    D.exercises = [...D.exercises, row].sort((a, b) => a.name.localeCompare(b.name));
-    ui.demoFile = null; render(); toast(`${name} added.`);
-  } catch (e) {
-    if (demo_path) api.removeFile(demo_path).catch(() => {});
-    msg.textContent = `Didn't save: ${e.message || e}`;
-  }
-}
-
 // Per-set columns that aren't a weight are logged as "val", so they never count towards lifting PRs.
 const VAL_METRICS = ["Watts", "Seconds", "Metres", "Calories"];
 const myCustomPrs = (cid) => D.prs.filter((r) => r.client_id === cid);
@@ -1641,6 +1846,10 @@ document.addEventListener("click", async (ev) => {
     case "back":
       if (bd?.unsaved && !confirm("Leave without saving this breakdown?")) return;
       if (act === "tab") { go(() => { ui.tab = v; ui.view = null; ui.calBack = null; }); scrollTo(0, 0); break; }
+      if (ui.view === "session" && p?.tpl) {
+        if (p.dirty) { clearTimeout(timers.program); await queueTpl(p).catch((err) => fail(err, "Session template")); }
+        go(() => { ui.view = null; ui.tab = "programs"; ui.libTab = "sessions"; ui.sess = null; ui.programId = null; }); scrollTo(0, 0); break;
+      }
       if (ui.view === "session" && ui.calBack) { const r = ui.calBack; go(() => { Object.assign(ui, r); ui.sess = null; ui.calBack = null; }); scrollTo(0, 0); break; }
       if (ui.view === "session") { go(() => { ui.view = "program"; ui.sess = null; }); break; }
       if (ui.view === "program" && program(ui.programId)?.owner_id) { const cid = program(ui.programId).owner_id; go(() => { ui.view = "client"; ui.clientId = cid; ui.clientTab = "profile"; ui.confirmDelProgram = false; }); scrollTo(0, 0); break; }
@@ -1775,16 +1984,80 @@ document.addEventListener("click", async (ev) => {
       } catch (err) { fail(err, "Program"); }
       break;
     }
-    case "open-exlib": go(() => { ui.view = "exlib"; }); scrollTo(0, 0); break;
-    case "exlib-add": b.disabled = true; await addExercise(); b.disabled = false; break;
-    case "exlib-del": {
-      const x = D.exercises.find((y) => y.id === id);
-      if (!x || !confirm(`Delete ${x.name} from the library?`)) return;
-      try { await api.deleteExercise(x); D.exercises = D.exercises.filter((y) => y.id !== id); render(); } catch (err) { fail(err, "Delete"); }
+    case "lib-tab": go(() => { ui.libTab = v; ui.libSel = new Set(); ui.drawer = null; ui.demoFile = null; }); break;
+    case "lib-sort": { const L = libState(ui.libTab || "programs"); go(() => { if (L.sort === v) L.dir = L.dir === "asc" ? "desc" : "asc"; else { L.sort = v; L.dir = "asc"; } L.page = 0; }); break; }
+    case "lib-page": { const L = libState(ui.libTab || "programs"); go(() => (L.page = Math.max(0, L.page + +v))); scrollTo(0, 0); break; }
+    case "lib-create": {
+      const tab = ui.libTab || "programs";
+      if (tab === "programs") { go(() => (ui.newProg = { name: "", weeks: "4" })); document.getElementById("np-name")?.focus(); break; }
+      if (tab === "sessions") { openTemplate(null); break; }
+      ui.demoFile = null;
+      go(() => (ui.drawer = tab === "exercises" ? { kind: "exercise", d: newEx() } : tab === "circuits" ? { kind: "circuit", d: circDraft(null) } : { kind: "prescription", d: rxDraft(null) }));
+      document.querySelector(".dr input, .dr select")?.focus(); break;
+    }
+    case "open-ex": { const x = D.exercises.find((y) => y.id === id); if (!x) return; ui.demoFile = null; go(() => (ui.drawer = { kind: "exercise", d: exDraft(x) })); break; }
+    case "open-circ": go(() => (ui.drawer = { kind: "circuit", d: circDraft(libItem(id)) })); break;
+    case "open-rx": go(() => (ui.drawer = { kind: "prescription", d: rxDraft(libItem(id)) })); break;
+    case "open-tpl": { const it = libItem(id); if (it) openTemplate(it); break; }
+    case "prog-settings": go(() => { ui.programId = id; ui.week = 0; ui.view = "program"; ui.pSettings = true; }); scrollTo(0, 0); break;
+    case "dr-cancel": ui.demoFile = null; go(() => (ui.drawer = null)); break;
+    case "dr-save": await drSave(b); break;
+    case "dr-untag": go(() => ui.drawer.d.tags.splice(+b.dataset.i, 1)); break;
+    case "dr-unvid": go(() => ui.drawer.d.videos.splice(+b.dataset.i, 1)); break;
+    case "lib-del-one":
+    case "lib-del": {
+      const tab = ui.libTab || "programs", ids = act === "lib-del-one" ? [id] : [...(ui.libSel || [])];
+      if (!ids.length) return;
+      const noun = { programs: "program", sessions: "session template", exercises: "exercise", circuits: "circuit", prescriptions: "prescription" }[tab];
+      if (!confirm(`Delete ${ids.length} ${noun}${ids.length === 1 ? "" : "s"}?${tab === "programs" ? " Athletes and teams on them lose those sessions." : ""} This can't be undone.`)) return;
+      try {
+        if (tab === "programs") {
+          for (const pid of ids) await api.deleteProgram(pid);
+          D.programs = D.programs.filter((x) => !ids.includes(x.id));
+          D.profiles.forEach((c) => { if (ids.includes(c.program_id)) c.program_id = null; }); D.teams.forEach((t) => { if (ids.includes(t.program_id)) t.program_id = null; });
+        } else if (tab === "exercises") {
+          const gone = D.exercises.filter((x) => ids.includes(x.id));
+          await api.deleteExercises(ids);
+          gone.forEach((x) => x.demo_path && api.removeFile(x.demo_path).catch(() => {}));
+          D.exercises = D.exercises.filter((x) => !ids.includes(x.id)); pickNames = null;
+        } else { await api.deleteLibItems(ids); D.libItems = D.libItems.filter((x) => !ids.includes(x.id)); }
+        ids.forEach((x) => ui.libSel?.delete(x)); render(); toast(`Deleted ${ids.length} ${noun}${ids.length === 1 ? "" : "s"}.`);
+      } catch (err) { fail(err, "Delete"); }
+      break;
+    }
+    case "card-savetpl": {
+      const day = p.weeks[+b.dataset.w].days.find((x) => x.id === id); if (!day) return;
+      if (!D.libReady) return toast("Session templates need the library database update first (run-0019-library.sql).");
+      try { const copy = freshDay(day); await keepLibItem({ kind: "session", title: (day.name || "").trim().slice(0, 120) || "Untitled session", tags: [], data: copy, created_by: myName() }); toast(`${day.name || "Session"} saved to Library, Sessions.`); }
+      catch (err) { fail(err, "Session template"); }
+      break;
+    }
+    case "tpl-pick": go(() => (ui.addTpl = { w: +b.dataset.w, dow: +b.dataset.dow, q: "" })); document.getElementById("tpl-q")?.focus(); break;
+    case "tpl-cancel": go(() => (ui.addTpl = null)); break;
+    case "tpl-add": {
+      const it = libItem(id), a = ui.addTpl; if (!it || !a) return;
+      const day = { ...freshDay({ coachNote: "", exercises: [], ...it.data }), dow: a.dow };
+      p.weeks[a.w].days.push(day); ui.addTpl = null;
+      if (ui.view === "session") { ui.week = a.w; ui.sess = { w: a.w, id: day.id }; }
+      render(); saveProgramSoon(); toast(`${it.title} added to week ${a.w + 1} day ${dayNum(a.dow)}.`);
+      break;
+    }
+    case "circ-savelib": {
+      const x = wk.days[d].exercises[e];
+      if (!D.libReady) return toast("Saved circuits need the library database update first (run-0019-library.sql).");
+      try { await keepLibItem({ kind: "circuit", title: (x.name || "Circuit").trim().slice(0, 120), tags: [], data: { instructions: x.note || "", results: resultLabel(x.score), videos: [] }, created_by: myName() }); toast(`${x.name || "Circuit"} saved to Library, Circuits.`); }
+      catch (err) { fail(err, "Circuit"); }
+      break;
+    }
+    case "rx-save": {
+      const x = wk.days[d].exercises[e], data = { param1: "Reps", param2: paramOf(x.metric), rows: rowsOf(x).map((r) => ({ reps: String(r.reps ?? "").trim(), val: String(r.val ?? "").trim() })) };
+      if (libOf("prescription").some((r) => sameRx(r.data || {}, data))) return toast("This prescription is already in the library.");
+      try { const row = await keepLibItem({ kind: "prescription", title: rxTitle(data) || "Prescription", tags: ["Uncategorized"], data, created_by: myName() }); render(); toast(`${row.title} saved to Library, Prescriptions.`); }
+      catch (err) { fail(err, "Prescription"); }
       break;
     }
     case "demo": {
-      const box = b.closest(".demo, .item")?.querySelector(".demo-vid");
+      const box = b.closest(".demo, .item, .dr-body")?.querySelector(".demo-vid");
       if (box) { box.innerHTML = box.innerHTML ? "" : `<div class="vid wide" data-video="${esc(b.dataset.path)}">Loading demo</div>`; hydrateVideos(); }
       break;
     }
@@ -2071,7 +2344,7 @@ document.addEventListener("click", async (ev) => {
       const { l, day } = logFor(ui.logKey); l.done = true;
       const wins = scorePRs(l, day);
       const ok = await saveLogSoon(l, true);
-      const prs = newPRs(l, clientLogs(me.id), nameOf);
+      const prs = newPRs(l, clientLogs(me.id), nameOf, trackName);
       ui.boards = {}; // fresh numbers next time a leaderboard shows
       if (ok === "sent") for (const w of wins) await savePr(me.id, w.name, w.cat, w.value).catch((err) => fail(err, "PR"));
       const said = [...prs.map((x) => x.kind === "heaviest" ? `${x.name} ${x.kg} kg x ${x.reps}` : `${x.name} est. 1RM ${x.e1rm} kg`), ...wins.map((w) => `${w.name} ${w.value}`)];
@@ -2114,6 +2387,13 @@ document.addEventListener("input", (ev) => {
   if (t.id === "v-note") { ui.vnote = t.value; return; }
   if (t.id === "v-ex") { ui.filmEx = t.value; return; }
   if (t.id === "chat-body") { ui.chatDraft = t.value; return; }
+  if (t.dataset.dr) return drInput(t);
+  if (a === "lib-q") {
+    const L = libState(ui.libTab || "programs"); L.q = t.value; L.page = 0; ui.libSel = new Set();
+    debounce("lib-q", () => { const at = document.getElementById("lib-q")?.selectionStart; render(); const el = document.getElementById("lib-q"); if (el) { el.focus(); el.setSelectionRange(at ?? el.value.length, at ?? el.value.length); } }, 150);
+    return;
+  }
+  if (a === "tpl-q") { ui.addTpl.q = t.value; document.getElementById("tpl-list").innerHTML = tplList(t.value); return; }
   if (!a) return;
   if (t.dataset.count) { const c = document.getElementById(t.dataset.count); if (c) c.textContent = `${t.value.length}/10000`; }
   const p = program(ui.programId), wk = p?.weeks[ui.week], d = +t.dataset.d, e = +t.dataset.e;
@@ -2165,7 +2445,19 @@ document.addEventListener("change", async (ev) => {
     return;
   }
   if (t.id === "ref-file") { const f = t.files?.[0]; t.value = ""; if (f) { warmUp(); addRef(f); } return; }
+  if (t.dataset.rerender) { drInput(t); render(); return; }
+  if (t.id === "dr-tag" || t.id === "dr-vid") { if (t.value.trim() && [...(t.list?.options || [])].some((o) => o.value === t.value)) drAddTag(t, t.id === "dr-vid" ? "videos" : "tags"); return; }
   const a = t.dataset.change; if (!a) return;
+  if (a === "lib-tag") { const L = libState(ui.libTab); L.tag = t.value; L.page = 0; ui.libSel = new Set(); render(); return; }
+  if (a === "lib-sel") { const sel = (ui.libSel ||= new Set()); t.checked ? sel.add(t.dataset.id) : sel.delete(t.dataset.id); render(); return; }
+  if (a === "lib-all") { const sel = (ui.libSel ||= new Set()); document.querySelectorAll('[data-change="lib-sel"]').forEach((x) => (t.checked ? sel.add(x.dataset.id) : sel.delete(x.dataset.id))); render(); return; }
+  if (a === "dr-sets") { const d = ui.drawer.d, n = +t.value; d.rows = Array.from({ length: n }, (_, i) => d.rows[i] || { ...(d.rows[d.rows.length - 1] || { reps: "", val: "" }) }); render(); return; }
+  if (a === "rx-apply") {
+    const it = libItem(t.value), x = program(ui.programId).weeks[ui.week].days[+t.dataset.d].exercises[+t.dataset.e];
+    if (!it || !it.data?.rows?.length) return;
+    const { rows, metric } = applyRx(x, it.data); x.metric = metric; applyRows(x, rows); render(); saveProgramSoon(); toast(`${it.title} applied.`);
+    return;
+  }
   if (a === "board-ex") { ui.boardEx = { ...ui.boardEx, [t.dataset.tid]: t.value }; document.querySelector(`[data-board="${t.dataset.tid}"]`).innerHTML = boardBody(t.dataset.tid); return; }
   if (a === "t-board") {
     try { const row = await api.saveTeam(ui.teamId, { leaderboard: t.checked }); D.teams = D.teams.map((x) => (x.id === row.id ? row : x)); toast(t.checked ? "Athletes in this team can see the leaderboard." : "Leaderboard hidden from athletes."); }
@@ -2192,12 +2484,6 @@ document.addEventListener("change", async (ev) => {
     const theme = t.value.trim().slice(0, 40);
     try { const row = await api.setLibrary(t.dataset.id, theme ? { theme, keep: true } : { theme }); D.videos = D.videos.map((y) => (y.id === row.id ? row : y)); render(); }
     catch (err) { fail(err, "Theme"); }
-  }
-  if (a === "exlib-field") {
-    const x = D.exercises.find((y) => y.id === t.dataset.id), k = t.dataset.k, val = t.value.trim();
-    if (!x) return;
-    if (k === "demo_url" && val && !/^https:\/\//i.test(val)) return toast("The link needs to start with https://");
-    try { const row = await api.saveExercise({ ...x, [k]: val }); D.exercises = D.exercises.map((y) => (y.id === row.id ? row : y)); toast("Saved."); } catch (err) { fail(err, "Exercise"); }
   }
   if (a === "ck-note") { await saveCheckin({ note: t.value.trim().slice(0, 300) }); toast("Sent to your coach."); }
   if (a === "pr-kg") {
@@ -2271,11 +2557,11 @@ document.addEventListener("focusout", (ev) => {
   if (t.matches?.("input[data-pick]")) setTimeout(() => { if (document.activeElement !== t) closePick(t); }, 120);
 });
 document.addEventListener("mousedown", (ev) => {
-  const b = ev.target.closest?.("[data-pick-name],[data-pick-new],[data-pick-circuit]");
+  const b = ev.target.closest?.("[data-pick-name],[data-pick-new],[data-pick-circuit],[data-pick-circ]");
   if (!b) return;
   ev.preventDefault();
   const input = pickInput(b);
-  choosePick(input, b.dataset.pickNew ? "new" : b.dataset.pickCircuit ? "circuit" : b.dataset.pickName);
+  choosePick(input, b.dataset.pickNew ? "new" : b.dataset.pickCircuit ? "circuit" : b.dataset.pickCirc ? { circ: b.dataset.pickCirc } : b.dataset.pickName);
 });
 document.addEventListener("keydown", (ev) => {
   const t = ev.target;
@@ -2289,7 +2575,7 @@ document.addEventListener("keydown", (ev) => {
     } else if (ev.key === "Enter") {
       ev.preventDefault();
       const hit = !box.hidden && items[ui.pickAt || 0];
-      choosePick(t, hit ? hit.dataset.pickName : "new");
+      choosePick(t, hit ? (hit.dataset.pickCirc ? { circ: hit.dataset.pickCirc } : hit.dataset.pickName) : "new");
     } else if (ev.key === "Escape") closePick(t);
     return;
   }
@@ -2299,7 +2585,8 @@ document.addEventListener("keydown", (ev) => {
     const next = document.getElementById(t.id.replace(/-(\d+)-(reps|val)$/, (_, r, f) => `-${+r + 1}-${f}`));
     if (next) next.focus(); else t.blur();
   }
-  if (ev.key === "Escape" && (ui.sel?.size || ui.ctx || ui.repeat || ui.newProg)) { ui.sel = null; ui.ctx = null; ui.repeat = null; ui.newProg = null; render(); }
+  if (ev.key === "Enter" && (t.id === "dr-tag" || t.id === "dr-vid")) { ev.preventDefault(); drAddTag(t, t.id === "dr-vid" ? "videos" : "tags"); return; }
+  if (ev.key === "Escape" && (ui.sel?.size || ui.ctx || ui.repeat || ui.newProg || ui.drawer || ui.addTpl)) { ui.sel = null; ui.ctx = null; ui.repeat = null; ui.newProg = null; ui.drawer = null; ui.addTpl = null; ui.demoFile = null; render(); }
 });
 // Drag a box over empty calendar space to pick sessions; drag a session card to move it.
 let rb = null;

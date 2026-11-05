@@ -6,7 +6,18 @@ const role = new URLSearchParams(location.search).get("as") || "coach";
 const coach = { id: "c", email: "coach@x", name: "Coach", role: "coach", approved: true, goal: "" };
 const amy = { id: "a", email: "amy@x", name: "Amy", role: "client", approved: true, goal: "", program_id: null, start_date: "2026-09-28" };
 const ben = { id: "b", email: "ben@x", name: "Ben", role: "client", approved: false, goal: "" };
-const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [], prs: [], prHistory: [], checkins: [], invites: [], calls: [] };
+const db = { profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [], prs: [], prHistory: [], checkins: [], invites: [], calls: [], libItems: [] };
+// ?lib=1: a small library like Alessio's TrainHeroic one (tags, a video, a circuit, a template, a prescription).
+if (new URLSearchParams(location.search).get("lib")) {
+  const ex = (name, extra = {}) => ({ id: "x-" + name.replace(/\W+/g, ""), name, demo_url: "", demo_path: null, cues: "", param1: "Reps", param2: "Weight (kg)", tags: [], swaps: [], ref_max: "", track_as: "", created_by: "Alessio Angelucci", ...extra });
+  db.exercises.push(ex("Front Squat", { tags: ["Primary Lifts", "Squat", "Barbell"], demo_url: "https://youtu.be/x", cues: "Brace, sit between the hips, drive the floor away." }),
+    ex("Box Jump", { tags: ["Plyometrics", "Box"], param2: "" }), ex("Paused Back Squat", { tags: ["Squat"], ref_max: "Back Squat", track_as: "" }),
+    ex("Row Erg", { param1: "Calories (cal)", param2: "", tags: ["Conditioning"] }), ex("Strict Pull Up", { tags: ["Gymnastics", "Vertical Pulling"], swaps: ["Banded Pull Up", "Ring Row"] }),
+    ...Array.from({ length: 120 }, (_, i) => ex(`Accessory ${String(i + 1).padStart(3, "0")}`)));
+  db.libItems.push({ id: "li-c1", kind: "circuit", title: "Fran", tags: ["Conditioning"], data: { instructions: "21-15-9\nThrusters 43/30kg\nPull Ups", results: "Time", videos: ["Back Squat"] }, created_by: "Alessio Angelucci", created_at: "2026-03-02T00:00:00Z" },
+    { id: "li-s1", kind: "session", title: "Lower Back Rehab W1D2 - Mobility", tags: [], data: { id: "tplday1", name: "Lower Back Rehab W1D2 - Mobility", coachNote: "Easy pace.", exercises: [{ id: "te1", block: "A", name: "Back Squat", sets: 3, reps: "5", target: "", metric: "kg", rows: [{ reps: "5", val: "60" }, { reps: "5", val: "60" }, { reps: "5", val: "60" }], cat: "Strength/Power", section: "Strength" }] }, created_by: "Alessio Angelucci", created_at: "2026-05-11T00:00:00Z" },
+    { id: "li-r1", kind: "prescription", title: "5 x 3 @ 80%", tags: ["Strength"], data: { param1: "Reps", param2: "Weight (%)", rows: Array.from({ length: 5 }, () => ({ reps: "3", val: "80" })) }, created_by: "Alessio Angelucci", created_at: "2026-01-01T00:00:00Z" });
+}
 if (new URLSearchParams(location.search).get("seed")) {
   db.programs.push({ id: "p-seed", ...exampleProgram() }); amy.program_id = "p-seed";
   db.logs.push({ id: "l-seed", client_id: "a", program_id: "p-seed", week: 0, day_id: db.programs[0].weeks[0].days[0].id, date: "2026-09-28", done: true, note: "", entries: [] });
@@ -55,7 +66,7 @@ export const sendReset = async () => {};
 export const setPassword = async () => {};
 export const signOut = async () => {};
 export const myProfile = async () => { if (window.__offline) throw new TypeError("Failed to fetch"); return meRow; };
-export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips"), progReady: true, teamsReady: true, socialReady: true, prsReady: !new URLSearchParams(location.search).get("noprs"), checkinsReady: true, invitesReady: true,
+export const loadAll = async () => ({ ...structuredClone(db), chatReady: true, clipsReady: !new URLSearchParams(location.search).get("noclips"), progReady: true, teamsReady: true, socialReady: true, prsReady: !new URLSearchParams(location.search).get("noprs"), checkinsReady: true, invitesReady: true, libReady: !new URLSearchParams(location.search).get("nolib"),
   callCfg: structuredClone(callCfg), callsReady: true, calls: structuredClone(role === "coach" ? db.calls : db.calls.filter((c) => c.client_id === meRow.id)) });
 const listeners = [];
 export const onMessage = (fn) => { listeners.push(fn); return () => {}; };
@@ -89,6 +100,9 @@ export const savePushSub = async (e, p, a) => { window.__pushSub = { e, p, a }; 
 export const deletePushSub = async () => { window.__pushSub = null; };
 export const loadMessages = async () => structuredClone(db.messages);
 export const saveExercise = async (x) => { const row = { demo_url: "", demo_path: null, cues: "", ...structuredClone(x), id: x.id || "x" + Math.random() }; db.exercises = [...db.exercises.filter((y) => y.id !== row.id), row]; window.__exercise = row; return structuredClone(row); };
+export const deleteExercises = async (ids) => { db.exercises = db.exercises.filter((y) => !ids.includes(y.id)); };
+export const saveLibItem = async (it) => { const row = { tags: [], data: {}, created_by: "", ...structuredClone(it), id: it.id || "li" + Math.random(), created_at: db.libItems.find((y) => y.id === it.id)?.created_at || new Date().toISOString() }; db.libItems = [...db.libItems.filter((y) => y.id !== row.id), row]; window.__lib = row; return structuredClone(row); };
+export const deleteLibItems = async (ids) => { db.libItems = db.libItems.filter((y) => !ids.includes(y.id)); };
 export const deleteExercise = async (x) => { db.exercises = db.exercises.filter((y) => y.id !== x.id); };
 export const uploadDemo = async (cid, file, name) => { window.__demo = file; return `${cid}/demo-${name}--1.webm`; };
 export const removeFile = async () => {};
