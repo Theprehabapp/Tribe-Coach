@@ -5,7 +5,7 @@ import { mountBreakdown } from "./breakdown.js";
 import { prepareVideo, checkVideo, warmUp } from "./upload.js";
 import * as notify from "./notify.js";
 import { liftSets, series, records, newPRs } from "./progress.js";
-import { PR_LIFTS, PR_SETS, KINDS, validScore, scoreKind, prTarget, beats } from "./scores.js";
+import { PR_LIFTS, PR_SETS, KINDS, validScore, scoreKind, prTarget, beats, rankScores } from "./scores.js";
 import { openTimer, closeTimer, presetFor, restSecs } from "./timer.js";
 import { PARAMS, STOCK_TAGS, RX_CATEGORIES, CIRCUIT_RESULTS, metricOf, paramOf, resultTag, resultLabel, filterRows, sortRows, pageOf, tagCounts, rxTitle, applyRx, cleanSwaps, cleanTags } from "./library.js";
 import { DEFAULT_CALLS, slotsFor, callMonth, nextMonth, googleLink, icsFile } from "./calls.js";
@@ -1492,8 +1492,25 @@ document.addEventListener("pointerover", (ev) => {
 function boardBox(team, coachView) {
   if (!D.socialReady || !team) return "";
   if (!coachView && team.leaderboard === false) return "";
-  return `<section class="stack"><div class="section-head"><h2>${esc(team.name)} leaderboard</h2><span class="muted small">Best set per lift, ranked by estimated 1RM</span></div>
-    <div data-board="${team.id}">${boardBody(team.id)}</div></section>`;
+  const mode = ui.boardMode?.[team.id] || "lifts";
+  return `<section class="stack"><div class="section-head"><h2>${esc(team.name)} leaderboard</h2>
+    <div class="seg" role="group" aria-label="Leaderboard">${[["lifts", "Lifts"], ["workouts", "Workouts"]].map(([k, l]) => `<button data-act="board-mode" data-tid="${team.id}" data-v="${k}" aria-pressed="${k === mode}">${l}</button>`).join("")}</div></div>
+    ${mode === "lifts" ? `<span class="muted small">Best set per lift, ranked by estimated 1RM</span><div data-board="${team.id}">${boardBody(team.id)}</div>`
+      : `<span class="muted small">Scored blocks, ranked per workout and day. Fastest time first; most rounds, reps, calories, metres, watts or weight first.</span><div data-scores="${team.id}">${scoresBody(team.id)}</div>`}</section>`;
+}
+// Workout scores: pick a workout and day, see the team ranked on it.
+function scoresBody(tid) {
+  const rows = ui.scores?.[tid];
+  if (rows === undefined) return '<p class="small muted">Loading leaderboard</p>';
+  if (rows === "missing") return `<div class="empty">${isCoach() ? "Workout leaderboards need one database update: paste run-0020-score-board.sql into Supabase's SQL editor and press Run." : "Workout leaderboards are coming soon."}</div>`;
+  const groups = rankScores(rows);
+  if (!groups.length) return '<div class="empty">No scores logged in this team yet. Athletes add a score under a scored block when they log a session.</div>';
+  const g = groups.find((x) => x.key === ui.scoreEx?.[tid]) || groups[0];
+  const what = { time: "Time", rounds: "Rounds + reps", reps: "Reps", cal: "Calories", m: "Metres", watts: "Watts", kg: "Weight (kg)", score: "Score" }[g.kind];
+  return `<label class="f">Workout<select class="t" data-change="score-ex" data-tid="${tid}">${groups.map((x) => `<option value="${esc(x.key)}"${x === g ? " selected" : ""}>${esc(x.workout)}, ${fmtDay(x.day)} (${x.rows.length})</option>`).join("")}</select></label>
+    <div class="tbl"><table class="recs board"><thead><tr><th scope="col">#</th><th scope="col">Athlete</th><th scope="col">${what}</th></tr></thead><tbody>
+    ${g.rows.map((r) => `<tr${r.client_id === me.id ? ' class="me"' : ""}><td class="num">${r.place ?? "-"}</td><th scope="row">${esc(r.athlete)}${r.client_id === me.id ? " (you)" : ""}</th><td class="num">${esc(r.result)}</td></tr>`).join("")}</tbody></table></div>
+    ${g.kind === "score" ? '<p class="small muted">This block has no score type, so it isn\'t ranked. Set its Results in the session builder.</p>' : ""}`;
 }
 function boardBody(tid) {
   const rows = ui.boards?.[tid];
@@ -1508,6 +1525,15 @@ function boardBody(tid) {
     ${ranked.map((r, i) => `<tr${r.client_id === me.id ? ' class="me"' : ""}><td class="num">${i + 1}</td><th scope="row">${esc(r.athlete)}${r.client_id === me.id ? " (you)" : ""}</th><td class="num">${+r.kg} kg x ${r.reps}<span class="muted small"> ${fmtDay(r.day)}</span></td><td class="num">${+(+r.e1rm).toFixed(1)} kg</td></tr>`).join("")}</tbody></table></div>`;
 }
 async function hydrateBoards() {
+  for (const el of document.querySelectorAll("[data-scores]")) {
+    const tid = el.dataset.scores;
+    if (ui.scores?.[tid] !== undefined) continue;
+    ui.scores = { ...ui.scores, [tid]: null };
+    let rows;
+    try { rows = await api.teamScores(tid); } catch (err) { console.error(err); rows = /team_scores|function|schema cache/i.test(err.message || "") ? "missing" : []; }
+    ui.scores = { ...ui.scores, [tid]: rows };
+    document.querySelectorAll(`[data-scores="${tid}"]`).forEach((x) => (x.innerHTML = scoresBody(tid)));
+  }
   for (const el of document.querySelectorAll("[data-board]")) {
     const tid = el.dataset.board;
     if (ui.boards?.[tid]) continue;
@@ -2329,6 +2355,7 @@ document.addEventListener("click", async (ev) => {
       ui.ckEdit = false;
       break;
     }
+    case "board-mode": go(() => (ui.boardMode = { ...ui.boardMode, [b.dataset.tid]: v })); break;
     case "pr-all": go(() => { (ui.prAll ||= {})[b.dataset.cid] = !ui.prAll[b.dataset.cid]; }); if (!ui.prAll[b.dataset.cid]) document.querySelector(".prs")?.scrollIntoView(); break;
     case "ck-edit": go(() => (ui.ckEdit = true)); break;
     case "timer": openTimer(); break;
@@ -2345,7 +2372,7 @@ document.addEventListener("click", async (ev) => {
       const wins = scorePRs(l, day);
       const ok = await saveLogSoon(l, true);
       const prs = newPRs(l, clientLogs(me.id), nameOf, trackName);
-      ui.boards = {}; // fresh numbers next time a leaderboard shows
+      ui.boards = {}; ui.scores = {}; // fresh numbers next time a leaderboard shows
       if (ok === "sent") for (const w of wins) await savePr(me.id, w.name, w.cat, w.value).catch((err) => fail(err, "PR"));
       const said = [...prs.map((x) => x.kind === "heaviest" ? `${x.name} ${x.kg} kg x ${x.reps}` : `${x.name} est. 1RM ${x.e1rm} kg`), ...wins.map((w) => `${w.name} ${w.value}`)];
       go(() => (ui.view = null));
@@ -2458,6 +2485,7 @@ document.addEventListener("change", async (ev) => {
     const { rows, metric } = applyRx(x, it.data); x.metric = metric; applyRows(x, rows); render(); saveProgramSoon(); toast(`${it.title} applied.`);
     return;
   }
+  if (a === "score-ex") { ui.scoreEx = { ...ui.scoreEx, [t.dataset.tid]: t.value }; document.querySelector(`[data-scores="${t.dataset.tid}"]`).innerHTML = scoresBody(t.dataset.tid); return; }
   if (a === "board-ex") { ui.boardEx = { ...ui.boardEx, [t.dataset.tid]: t.value }; document.querySelector(`[data-board="${t.dataset.tid}"]`).innerHTML = boardBody(t.dataset.tid); return; }
   if (a === "t-board") {
     try { const row = await api.saveTeam(ui.teamId, { leaderboard: t.checked }); D.teams = D.teams.map((x) => (x.id === row.id ? row : x)); toast(t.checked ? "Athletes in this team can see the leaderboard." : "Leaderboard hidden from athletes."); }
