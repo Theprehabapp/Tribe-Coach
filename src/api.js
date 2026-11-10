@@ -228,6 +228,7 @@ export const sendMessage = (m) =>
   sb.from("messages").insert({ client_id: m.client_id, body: m.body || "", video_id: m.video_id || null, clip_path: m.clip_path || null, ...(m.log_id ? { log_id: m.log_id } : {}) }).select().single().then(check);
 // Each team member's best set per lift (migration 0010).
 export const teamBoard = (team) => sb.rpc("team_board", { team }).then(check);
+export const teamScores = (team) => sb.rpc("team_scores", { team }).then(check);
 export const markRead = (clientId) => sb.rpc("mark_read", { thread: clientId }).then(check);
 // Calls fn with each new message this person is allowed to see, as it's posted.
 export function onMessage(fn) {
