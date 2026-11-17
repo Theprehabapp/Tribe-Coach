@@ -4,7 +4,7 @@
 //   POST /api/billing-portal  a signed-in athlete gets Stripe's page to cancel, change card or see receipts
 // Secrets (Cloudflare > Workers > tribe-coach > Settings > Variables and Secrets): STRIPE_SECRET_KEY,
 // STRIPE_WEBHOOK_SECRET, SUPABASE_SERVICE_ROLE_KEY. SUPABASE_URL is a plain var in wrangler.jsonc.
-import { CURRENCY, planById } from "../src/plans.js";
+import { CURRENCY, FOCUS, planById, payable } from "../src/plans.js";
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const fail = (status, code, error) => json({ code, error }, status);
@@ -81,7 +81,7 @@ async function checkout(req, env) {
   let body;
   try { body = await req.json(); } catch { return fail(400, "bad_request", "Bad request."); }
   const plan = planById(body?.plan);
-  if (!plan) return fail(400, "bad_plan", "That plan doesn't exist.");
+  if (!payable(plan)) return fail(400, "bad_plan", "That plan doesn't exist.");
   // Who is paying: the signed-in person, or the account just made on /join (matched by email, not yet approved).
   const user = await userFrom(req, env);
   const email = String(user?.email || body.email || "").trim().toLowerCase();
@@ -93,6 +93,9 @@ async function checkout(req, env) {
   if (sub && PAID.includes(sub.status)) return fail(409, "already_paid", "That account already has an active plan.");
   // Without a session, an approved account must sign in first, so nobody can start a plan on someone else's account.
   if (!user && profile.approved) return fail(409, "existing_account", "There's already an account with that email.");
+  // What they're training for, picked on /join, becomes their goal unless they've already written one.
+  const focus = (Array.isArray(body.focus) ? body.focus : []).filter((f) => FOCUS.includes(f));
+  if (focus.length) await db(env, `profiles?id=eq.${profile.id}&goal=eq.`, { method: "PATCH", body: JSON.stringify({ goal: focus.join(", ") }) });
   const origin = new URL(req.url).origin;
   const s = await stripe(env, "POST", "checkout/sessions", checkoutParams(plan, { userId: profile.id, email: profile.email || email, origin }));
   return json({ url: s.url });

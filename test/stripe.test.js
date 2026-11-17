@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { verifySignature, form, checkoutParams, syncArgs } from "../worker/stripe.js";
-import { PLANS, planById } from "../src/plans.js";
+import { PLANS, STREAMS, planById, payable } from "../src/plans.js";
 
 async function sign(payload, secret, t) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -53,7 +53,8 @@ test("every plan is something Stripe will accept", () => {
   assert.equal(new Set(PLANS.map((p) => p.id)).size, PLANS.length);
   for (const p of PLANS) {
     assert.match(p.id, /^[a-z0-9-]+$/);
-    assert.ok(p.price > 0 && Number.isFinite(p.price), p.id);
+    assert.ok(p.price === null || payable(p), p.id);
+    assert.ok(STREAMS.some((x) => x.id === p.stream), p.id);
     assert.ok(["day", "week", "month", "year"].includes(p.interval), p.id);
     assert.ok(Array.isArray(p.features) && p.features.length, p.id);
     for (const s of [p.name, p.blurb, ...p.features]) assert.doesNotMatch(s, /[–—]/, "no long dashes");

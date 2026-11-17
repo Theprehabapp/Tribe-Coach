@@ -141,7 +141,7 @@ npx vite build --mode fake     # UI build against an in-memory backend, for offl
 
 ## Sign-up page and payments (Stripe)
 
-`/join` is a public page for new athletes: plans, a sign-up sheet, then Stripe Checkout. Paying approves the account, so they skip **Waiting for approval**. The plans and prices live in `src/plans.js` (the page and the worker both read it, so the price charged always matches the page). Link a plan straight from Instagram with `/join?plan=coaching`.
+`/join` is a public page for new athletes: plans, a sign-up sheet, then Stripe Checkout. Paying approves the account, so they skip **Waiting for approval**. The plans, prices and the two streams (Everyday athlete, Competitor) live in `src/plans.js` (the page and the worker both read it, so the price charged always matches the page). A plan with `price: null` shows an Apply button that emails the coach instead of taking payment. What the athlete ticks under "What are you training for?" is saved as their goal. Link a plan straight from Instagram with `/join?plan=coaching`.
 
 1. Run `supabase/migrations/0021_billing.sql` in the SQL Editor.
 2. In Stripe, **Developers > API keys**: copy the **Secret key** (`sk_live_...`, or `sk_test_...` to try it first).

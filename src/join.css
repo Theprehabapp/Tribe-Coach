@@ -165,3 +165,36 @@ input.t:focus { border-color: var(--muted); outline: none; }
 .nw { white-space: nowrap; }
 /* Room inside the rounded screen so the corners don't clip the app's top bar. */
 .phone { background: #F4F2EE; padding-top: 22px; }
+
+/* two-stream chooser in the hero */
+.paths { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.path { display: grid; gap: 6px; padding: 20px; border: 1px solid var(--rule); border-radius: 16px; background: var(--surface); text-decoration: none; transition: border-color .15s; }
+.path:hover { border-color: var(--fg); }
+.path strong { font: 800 22px/1.1 var(--display); text-transform: uppercase; letter-spacing: -.02em; }
+.path strong::after { content: " \2192"; }
+.path .small { color: var(--muted); }
+@media (max-width: 560px) { .paths { grid-template-columns: 1fr; } }
+
+/* competitor band */
+.band { background: var(--surface); border-block: 1px solid var(--rule); padding-block: 88px; }
+.band .features > div { background: var(--bg); }
+@media (max-width: 860px) { .band { padding-block: 64px; } }
+
+/* plans grouped by stream */
+#plan-list { display: grid; gap: 56px; }
+.stream { display: grid; gap: 22px; }
+.stream-head { display: grid; gap: 6px; border-bottom: 1px solid var(--paper-rule); padding-bottom: 14px; }
+.stream-head h3 { font: 800 26px/1.1 var(--display); text-transform: uppercase; letter-spacing: -.02em; }
+.stream-head p { color: var(--paper-muted); }
+.plan .price b { text-transform: uppercase; }
+
+/* focus picker in the sign-up sheet */
+.focus { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.focus legend { font-size: 14px; font-weight: 600; color: var(--muted); padding: 0; margin-bottom: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chips .chip { position: relative; cursor: pointer; }
+.chips .chip input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+.chips .chip span { display: inline-block; border: 1px solid var(--rule); border-radius: 999px; padding: 7px 14px; font-size: 14px; font-weight: 600; color: var(--muted); }
+.chips .chip input:checked + span { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.chips .chip input:focus-visible + span { outline: 2px solid var(--fg); outline-offset: 2px; }
+.plans:has(> .plan:only-child) { max-width: 560px; }
