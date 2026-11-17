@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Tribe HQ - Coaching for people with full-time jobs</title>
+  <meta name="description" content="Long-term strength and conditioning programs that account for work, sleep and stress. Programming from $25 a week, coaching with video feedback $50 a week. Cancel any time.">
+  <meta name="theme-color" content="#0B0B0C">
+  <meta property="og:title" content="Tribe HQ - Train for years, around a full-time job">
+  <meta property="og:description" content="Long-term programs that account for the stress outside the gym. From $25 a week.">
+  <meta property="og:image" content="/icon-512.png">
+  <link rel="icon" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800;900&family=Barlow:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/src/join.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="bar-in">
+      <a href="/join" class="logo" aria-label="TRIBE.HQ"></a>
+      <nav class="bar-links" aria-label="Page">
+        <a href="#how">How it works</a><a href="#plans">Plans</a><a href="#faq">FAQ</a>
+      </nav>
+      <a href="/" class="bar-login">Log in</a>
+      <a href="#plans" class="btn primary small">Join</a>
+    </div>
+  </header>
+
+  <main>
+    <!-- Shown after Stripe sends someone back. join.js fills it. -->
+    <section class="notice" id="notice" hidden></section>
+
+    <section class="hero wrap">
+      <div class="hero-copy">
+        <div class="kicker">Online strength and conditioning coaching</div>
+        <h1>Train for years.<br>Around a <span class="nw">full-time</span> job.</h1>
+        <p class="lead">A long-term program that accounts for what happens outside the gym - the deadlines, the bad nights, the weeks where life wins. Written by me, run in the Tribe app on your phone.</p>
+        <div class="cta-row">
+          <a href="#plans" class="btn primary">See the plans</a>
+          <span class="micro">From <strong data-from-price>$25</strong> a week. Cancel any time.</span>
+        </div>
+      </div>
+      <figure class="phone" aria-label="The Tribe app on a phone: today's check-in and session">
+        <img src="/landing/today.jpg" alt="Tribe app showing a daily check-in for sleep, soreness and energy, and a Start today's session button" width="780" height="1530" fetchpriority="high">
+      </figure>
+    </section>
+
+    <section class="strip">
+      <div class="wrap strip-in">
+        <div><span class="big">24 h</span><span class="small">Video feedback on the Coaching plan</span></div>
+        <div><span class="big">140+</span><span class="small">Athletes training on my programs</span></div>
+        <div><span class="big">0</span><span class="small">Lock-in contracts. Stop when you want</span></div>
+      </div>
+    </section>
+
+    <section class="wrap split" id="why">
+      <div class="stack-lg">
+        <div class="kicker">Who this is for</div>
+        <h2>Built for a week that's already full</h2>
+        <p class="lead">Most programs are written for someone whose only job is training. You've got a job, a commute and people who need you. That's not an excuse - it's the brief.</p>
+        <ol class="points">
+          <li><strong>Stress is stress.</strong> A hard week at work and a hard week in the gym come out of the same tank. Your program is built with that in mind, so a rough patch doesn't turn into an injury or a month off.</li>
+          <li><strong>Long term, not a six-week challenge.</strong> Blocks build on each other. The goal is that you're stronger and fitter in two years, not wrecked in six weeks.</li>
+          <li><strong>A daily check-in that actually gets read.</strong> Sleep, soreness and energy take ten seconds to log. I see it, and I adjust when the pattern says you need it.</li>
+          <li><strong>Sessions you can finish.</strong> Clear sets, reps and loads on your phone, a built-in timer, and your numbers worked out from your maxes. Turn up, follow it, go to work.</li>
+        </ol>
+      </div>
+      <figure class="phone small-phone" aria-label="Daily check-in with a note to the coach">
+        <img src="/landing/checkin.jpg" alt="Check-in showing sleep 2, soreness 4, energy 3 and the note Up with the baby, sent to the coach" width="780" height="1580" loading="lazy">
+      </figure>
+    </section>
+
+    <section class="wrap" id="how">
+      <div class="section-top">
+        <div class="kicker">How it works</div>
+        <h2>Three steps and you're training</h2>
+      </div>
+      <ol class="steps">
+        <li><span class="n">01</span><h3>Pick a plan</h3><p>Choose Programming or Coaching below and pay securely through Stripe. Billed weekly, cancel whenever you like.</p></li>
+        <li><span class="n">02</span><h3>Confirm your email</h3><p>You'll get one email to confirm it's you. Tap the link, log in to the app, and add it to your home screen.</p></li>
+        <li><span class="n">03</span><h3>Start training</h3><p>Your program is in the app. Log your sessions, check in each day, and on Coaching, film your lifts for a breakdown.</p></li>
+      </ol>
+    </section>
+
+    <section class="wrap" id="app">
+      <div class="section-top">
+        <div class="kicker">What's in the app</div>
+        <h2>Everything in one place</h2>
+      </div>
+      <div class="features">
+        <div><span class="n">01</span><h3>Your program, by date</h3><p>Today's session on the home screen. Every set, rep, load and rest written out, with coach notes.</p></div>
+        <div><span class="n">02</span><h3>Log as you go</h3><p>Tick off sets, record weight and RPE. Works without signal and syncs when you're back online.</p></div>
+        <div><span class="n">03</span><h3>Video breakdowns</h3><p>Film a lift and send it. I send back a slow-motion breakdown with lines, angles and my voice over it.</p></div>
+        <div><span class="n">04</span><h3>PRs and progress</h3><p>A PR board, estimated maxes and charts, so you can see the work adding up.</p></div>
+        <div><span class="n">05</span><h3>Timer built in</h3><p>Full-screen work and rest timer that's readable from across the gym.</p></div>
+        <div><span class="n">06</span><h3>Chat and check-in calls</h3><p>Message me in the app. Coaching athletes book a monthly call in the first week of each month.</p></div>
+      </div>
+    </section>
+
+    <section class="paper" id="plans">
+      <div class="wrap">
+        <div class="section-top">
+          <div class="kicker">Plans</div>
+          <h2>Pick how much of me you want</h2>
+          <p class="lead">Prices in AUD, billed weekly. No lock-in. Cancel from the app any time.</p>
+        </div>
+        <div class="plans" id="plan-list"><!-- join.js renders src/plans.js here --></div>
+        <p class="fine">Already training with me? You don't need to sign up here. <a href="/">Log in</a> with the email I have for you.</p>
+      </div>
+    </section>
+
+    <section class="wrap split coach" id="coach">
+      <div class="stack-lg">
+        <div class="kicker">Your coach</div>
+        <h2>Every program written by me</h2>
+        <p class="lead">I'm Alessio, and I run Tribe HQ - functional strength and conditioning. I write every program in the app and I watch every video that comes in. If you send me a lift, I'm the one who answers.</p>
+        <p class="muted">I coach people who train before work, after work and in their lunch break. The program is designed around that, not in spite of it.</p>
+      </div>
+      <!-- Testimonials: add quotes to TESTIMONIALS in src/join.js and this block appears. -->
+      <div class="quotes" id="quotes" hidden></div>
+    </section>
+
+    <section class="wrap" id="faq">
+      <div class="section-top">
+        <div class="kicker">Questions</div>
+        <h2>Before you sign up</h2>
+      </div>
+      <div class="faq">
+        <details><summary>What happens after I pay?</summary><p>You'll get an email asking you to confirm your address. Tap the link, log in at this site with the email and password you just chose, and your account is already active. Add the app to your home screen from your browser's share menu so it opens like any other app.</p></details>
+        <details><summary>How does billing work?</summary><p>Your card is charged weekly, in Australian dollars, through Stripe. I never see or store your card details. You'll get a receipt by email each week.</p></details>
+        <details><summary>How do I cancel?</summary><p>Open the app, scroll to the bottom and tap Manage billing. You can cancel, change card or see past receipts there. There's no lock-in contract and no exit fee.</p></details>
+        <details><summary>What's the difference between the plans?</summary><p>Programming gets you the full program in the app, check-ins, progress tracking and leaderboards. Coaching adds me: video breakdowns of your lifts within 24 hours, chat, and a monthly check-in call.</p></details>
+        <details><summary>Can I switch plans later?</summary><p>Yes. Send me a message in the app and I'll move you across. The change shows on your next weekly bill.</p></details>
+        <details><summary>Is there a phone app?</summary><p>Tribe runs in your phone's browser, so there's nothing to download from an app store. Once it's on your home screen it opens full screen, sends notifications and keeps working when the gym has no signal.</p></details>
+        <details><summary>I train with you already. Do I need to pay here?</summary><p>No. Log in with the email I have for you and your program is waiting. This page is for new athletes.</p></details>
+      </div>
+    </section>
+
+    <section class="final">
+      <div class="wrap final-in">
+        <h2>The best program is the one you're still doing next year</h2>
+        <p class="lead">Start this week. If it doesn't fit your life, cancel - no hard feelings.</p>
+        <a href="#plans" class="btn primary">See the plans</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-in">
+      <div class="lockup"><div class="logo"></div><div class="tag">Functional strength &amp; conditioning</div></div>
+      <div class="foot-links"><a href="/">Log in</a><a href="mailto:coach@tribeheadquarters.com.au">coach@tribeheadquarters.com.au</a></div>
+    </div>
+  </footer>
+
+  <!-- Sign-up sheet: opens when a plan is chosen. -->
+  <dialog id="signup" aria-labelledby="su-title">
+    <form id="su-form" class="sheet">
+      <div class="row spread"><div class="kicker" id="su-plan"></div><button type="button" class="x" data-close aria-label="Close">&times;</button></div>
+      <h2 id="su-title">Set up your login</h2>
+      <p class="muted small" id="su-lead">This is the email and password you'll use to log in to the app. Next, you'll pay on Stripe's secure page.</p>
+      <div id="su-fields">
+        <label class="f">Your name<input class="t" id="su-name" autocomplete="name" required></label>
+        <label class="f">Email<input class="t" id="su-email" type="email" autocomplete="email" required></label>
+        <label class="f">Password<input class="t" id="su-pass" type="password" minlength="8" autocomplete="new-password" required><span class="hint">At least 8 characters.</span></label>
+      </div>
+      <button class="btn primary wide" type="submit" id="su-go">Continue to payment</button>
+      <p class="small" id="su-msg" role="status"></p>
+      <p class="fine">Payments are handled by Stripe. Cancel any time from the app.</p>
+    </form>
+  </dialog>
+
+  <script type="module" src="/src/join.js"></script>
+</body>
+</html>

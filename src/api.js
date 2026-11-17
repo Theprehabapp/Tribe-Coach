@@ -20,11 +20,26 @@ export const onAuth = (fn) => sb.auth.onAuthStateChange((event, session) => fn(s
 const home = () => location.origin + location.pathname;
 export const signIn = (email, password) => sb.auth.signInWithPassword({ email, password }).then(check);
 // Returns { session } straight away when Supabase doesn't require email confirmation, otherwise { session: null }.
-export const signUp = (email, password, name) =>
-  sb.auth.signUp({ email, password, options: { emailRedirectTo: home(), data: name ? { name } : undefined } }).then(check);
+// `redirect` is where the confirm-email link lands: the app itself by default, also when signing up from /join.
+export const signUp = (email, password, name, redirect = location.origin + "/") =>
+  sb.auth.signUp({ email, password, options: { emailRedirectTo: redirect, data: name ? { name } : undefined } }).then(check);
 export const sendReset = (email) => sb.auth.resetPasswordForEmail(email, { redirectTo: home() }).then(check);
 export const setPassword = (password) => sb.auth.updateUser({ password }).then(check);
 export const signOut = () => sb.auth.signOut();
+
+/* ---------- payments (Stripe, through worker/stripe.js) ---------- */
+async function worker(path, body) {
+  const token = (await getSession())?.access_token;
+  const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body || {}) });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(out.error || "Something went wrong. Try again in a minute."), { code: out.code, status: r.status });
+  return out;
+}
+// Opens Stripe's checkout for a plan. Signed-in people are known from their session; someone who has just
+// signed up (and hasn't confirmed their email yet) is matched by the email they signed up with.
+export const startCheckout = (plan, email) => worker("/api/checkout", { plan, email }).then((r) => r.url);
+// Stripe's own page for cancelling, changing card and receipts.
+export const billingPortal = () => worker("/api/billing-portal").then((r) => r.url);
 
 /* ---------- loading ---------- */
 // Supabase returns at most 1,000 rows per request, so big tables are read in pages until a short page comes back.
@@ -43,7 +58,7 @@ export async function myProfile(uid) {
 
 // RLS decides what comes back: the coach gets everyone, a client gets their own rows and assigned program.
 export async function loadAll() {
-  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs, prHistory, checkins, invites, callSettings, calls, libItems] = await Promise.all([
+  const [profiles, programs, logs, videos, messages, exercises, maxes, teams, social, prs, prHistory, checkins, invites, callSettings, calls, libItems, subs] = await Promise.all([
     every(() => sb.from("profiles").select("*").order("created_at").order("id")),
     every(() => sb.from("programs").select("*").order("created_at", { ascending: false }).order("id")),
     every(() => sb.from("logs").select("*").order("date", { ascending: false }).order("id")),
@@ -69,12 +84,15 @@ export async function loadAll() {
     sb.from("calls").select("*").order("starts_at").then(check).catch(() => null),
     // Session templates, circuits and prescriptions arrived with migration 0019.
     every(() => sb.from("library_items").select("*").order("title").order("id")).catch(() => null),
+    // Paid plans from /join arrived with migration 0021. A client gets only their own row.
+    every(() => sb.from("subscriptions").select("*").order("user_id")).catch(() => null),
   ]);
   // Labelled breakdown clips arrived with migration 0006; until it's run, one breakdown per video as before.
   return { profiles, programs, logs, videos, messages: messages || [], chatReady: !!messages, clipsReady: videos.some((v) => "clips" in v),
     exercises: exercises || [], maxes: maxes || [], progReady: !!exercises && !!maxes,
     teams: teams || [], teamsReady: !!teams, socialReady: social, prs: prs || [], prHistory: prHistory || [], prsReady: !!prs && !!prHistory, checkins: checkins || [], checkinsReady: !!checkins, invites: invites || [], invitesReady: !!invites,
     callCfg: callSettings?.calls || null, calls: calls || [], callsReady: !!calls && !!callSettings?.calls,
+    subs: subs || [],
     libItems: libItems || [], libReady: !!libItems && (exercises || []).every((x) => "tags" in x) };
 }
 

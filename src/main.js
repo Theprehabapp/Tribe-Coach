@@ -8,6 +8,7 @@ import { liftSets, series, records, newPRs } from "./progress.js";
 import { PR_LIFTS, PR_SETS, KINDS, validScore, scoreKind, prTarget, beats } from "./scores.js";
 import { openTimer, closeTimer, presetFor, restSecs } from "./timer.js";
 import { PARAMS, STOCK_TAGS, RX_CATEGORIES, CIRCUIT_RESULTS, metricOf, paramOf, resultTag, resultLabel, filterRows, sortRows, pageOf, tagCounts, rxTitle, applyRx, cleanSwaps, cleanTags } from "./library.js";
+import { PLANS } from "./plans.js";
 import { DEFAULT_CALLS, slotsFor, callMonth, nextMonth, googleLink, icsFile } from "./calls.js";
 import {
   FEEDBACK_HOURS, DOW_LONG, W1_LINE, ymd, fmtDay, fmtLong, fmtTime,
@@ -203,7 +204,8 @@ function vSignIn() {
     </form>
     <div class="row auth-links">
       ${m !== "in" ? '<button class="link" data-act="auth-mode" data-v="in">I already have an account</button>' : '<button class="link" data-act="auth-mode" data-v="up">Create an account</button><button class="link" data-act="auth-mode" data-v="forgot">Forgot password?</button>'}
-    </div>`;
+    </div>
+    <p class="small muted">New to Tribe? <a class="link" href="/join">See the plans</a></p>`;
 }
 function vSetPassword(recovery) {
   return `<section class="hero"><div class="kicker">${recovery ? "Reset password" : "Account"}</div><h1>${recovery ? "Choose a new password" : "Change password"}</h1>
@@ -216,7 +218,8 @@ function vSetPassword(recovery) {
 }
 function vPending(noProfile) {
   return `<section class="hero"><div class="kicker">Almost there</div><h1>Waiting for approval</h1>
-    <p class="muted">${noProfile ? "Your account is still being set up." : "Your coach needs to approve your account before you can see your program. You'll get access as soon as they do."} Refresh this page later.</p></section>
+    <p class="muted">${noProfile ? "Your account is still being set up." : "Your coach needs to approve your account before you can see your program. You'll get access as soon as they do."} Refresh this page later.</p>
+    ${noProfile ? "" : '<p class="small muted">Signing up for a plan? <a class="link" href="/join#plans">Pick it here</a> and your account opens as soon as you\'ve paid.</p>'}</section>
     <div class="row"><button class="btn" data-act="signout">Sign out</button></div>`;
 }
 
@@ -296,9 +299,18 @@ function render() {
 function lockup() {
   return `<div class="lockup"><div class="logo" role="img" aria-label="TRIBE.HQ"></div><div class="tag">Functional Strength &amp; Conditioning</div></div>`;
 }
+// Paid plan from /join (migration 0021), if any.
+const subOf = (id) => (D.subs || []).find((x) => x.user_id === id) || null;
+const SUB_BAD = { past_due: "Payment failed", unpaid: "Unpaid", canceled: "Cancelled", incomplete: "Not paid", incomplete_expired: "Not paid", paused: "Paused" };
+function subChip(c) {
+  const x = subOf(c.id);
+  if (!x) return "";
+  const name = PLANS.find((p) => p.id === x.plan)?.name || x.plan || "Plan";
+  return SUB_BAD[x.status] ? ` <span class="chip red">${esc(name)}: ${SUB_BAD[x.status]}</span>` : ` <span class="chip">${esc(name)}</span>`;
+}
 function footer() {
   return lockup() + `<div class="row" style="justify-content:center">
-    <span class="small muted">${esc(me.email || "")}</span>${D.chatReady && ui.push === "on" ? '<button class="btn small ghost" data-act="push-off">Turn off notifications</button>' : ""}<button class="btn small ghost" data-act="password">Change password</button><button class="btn small ghost" data-act="signout">Sign out</button>
+    <span class="small muted">${esc(me.email || "")}</span>${D.chatReady && ui.push === "on" ? '<button class="btn small ghost" data-act="push-off">Turn off notifications</button>' : ""}${!isCoach() && subOf(me.id)?.stripe_customer ? '<button class="btn small ghost" data-act="billing">Manage billing</button>' : ""}<button class="btn small ghost" data-act="password">Change password</button><button class="btn small ghost" data-act="signout">Sign out</button>
     ${isCoach() ? '<button class="btn small ghost" data-act="cleanup">Clear video files reviewed 30+ days ago</button>' : ""}</div>`;
 }
 
@@ -1253,7 +1265,7 @@ function vClients() {
     out += `<div class="ath-row" role="row" data-q="${esc((name + " " + c.email).toLowerCase())}"><span role="cell">${D.teamsReady ? `<input type="checkbox" data-change="ath-sel" data-id="${c.id}" aria-label="Select ${esc(name)}"${sel.has(c.id) ? " checked" : ""}>` : ""}</span>
       <button class="ath-name" role="cell" data-act="open-client" data-id="${c.id}"><span class="av" aria-hidden="true">${esc(initials)}</span><span><strong>${esc(name)}</strong><span class="small muted">${esc(c.email)}</span></span></button>
       <span class="ath-act" role="cell"><button class="ico" data-act="ath-go" data-id="${c.id}" data-v="profile" title="Program" aria-label="${esc(name)} program">${ICON.cal}</button><button class="ico" data-act="ath-go" data-id="${c.id}" data-v="chat" title="Chat" aria-label="Chat with ${esc(name)}">${ICON.chat}${msgs ? `<span class="badge num">${msgs}</span>` : ""}</button><button class="ico" data-act="ath-go" data-id="${c.id}" data-v="library" title="Videos" aria-label="${esc(name)} videos">${ICON.vid}${vids ? `<span class="badge num">${vids}</span>` : ""}</button></span>
-      <span class="small" role="cell">${status}</span><span class="small muted" role="cell">${team ? esc(team.name) : "No team"}</span><span class="small muted num" role="cell">${ago == null ? "Never" : ago <= 0 ? "Today" : ago === 1 ? "Yesterday" : `${ago} days ago`}</span></div>`;
+      <span class="small" role="cell">${status}${subChip(c)}</span><span class="small muted" role="cell">${team ? esc(team.name) : "No team"}</span><span class="small muted num" role="cell">${ago == null ? "Never" : ago <= 0 ? "Today" : ago === 1 ? "Yesterday" : `${ago} days ago`}</span></div>`;
   }
   if (!shown.length) out += `<div class="empty">${approved.length ? "No athletes in this group." : "No clients yet."}</div>`;
   return out + "</div>";
@@ -1842,6 +1854,9 @@ document.addEventListener("click", async (ev) => {
     case "signout": stopChat?.(); stopChat = null; try { localStorage.removeItem(snapshot.key(me.id)); } catch { /* blocked */ } await api.signOut(); started = null; me = null; ui.authMode = "in"; renderShell(vSignIn()); break;
     case "auth-mode": ui.authEmail = document.getElementById("si-email")?.value.trim() || ui.authEmail; ui.authMode = v; renderShell(vSignIn()); break;
     case "password": go(() => (ui.view = "password")); scrollTo(0, 0); break;
+    case "billing":
+      try { toast("Opening billing..."); location.href = await api.billingPortal(); } catch (e) { toast(e.message); }
+      break;
     case "tab":
     case "back":
       if (bd?.unsaved && !confirm("Leave without saving this breakdown?")) return;
