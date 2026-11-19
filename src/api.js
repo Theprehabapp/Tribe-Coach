@@ -37,7 +37,7 @@ async function worker(path, body) {
 }
 // Opens Stripe's checkout for a plan. Signed-in people are known from their session; someone who has just
 // signed up (and hasn't confirmed their email yet) is matched by the email they signed up with.
-export const startCheckout = (plan, email, focus = []) => worker("/api/checkout", { plan, email, focus }).then((r) => r.url);
+export const startCheckout = (plan, email) => worker("/api/checkout", { plan, email }).then((r) => r.url);
 // Stripe's own page for cancelling, changing card and receipts.
 export const billingPortal = () => worker("/api/billing-portal").then((r) => r.url);
 

@@ -28,23 +28,23 @@ test("encodes nested fields the way Stripe expects", () => {
 });
 
 test("checkout charges the plan's price weekly in AUD, tied to the Tribe account", () => {
-  const p = checkoutParams(planById("coaching"), { userId: "u1", email: "amy@x", origin: "https://tribe.example" });
+  const p = checkoutParams(planById("crossfit-coaching"), { userId: "u1", email: "amy@x", origin: "https://tribe.example" });
   assert.equal(p.mode, "subscription");
-  assert.deepEqual(p.line_items[0].price_data, { currency: "aud", unit_amount: 5000, recurring: { interval: "week" }, product_data: { name: "Tribe Coaching" } });
+  assert.deepEqual(p.line_items[0].price_data, { currency: "aud", unit_amount: 5000, recurring: { interval: "week" }, product_data: { name: "CrossFit Tribe Coaching" } });
   assert.equal(p.client_reference_id, "u1");
-  assert.deepEqual(p.subscription_data.metadata, { user_id: "u1", plan: "coaching" });
+  assert.deepEqual(p.subscription_data.metadata, { user_id: "u1", plan: "crossfit-coaching" });
   assert.equal(p.subscription_data.trial_period_days, undefined);
   assert.equal(p.success_url, "https://tribe.example/join?paid=1");
   // A plan that names a Stripe dashboard price uses it instead.
-  assert.deepEqual(checkoutParams({ ...planById("coaching"), stripePrice: "price_123" }, { userId: "u1", email: "a", origin: "o" }).line_items[0], { price: "price_123", quantity: 1 });
-  assert.equal(checkoutParams({ ...planById("coaching"), trialDays: 7 }, { userId: "u1", email: "a", origin: "o" }).subscription_data.trial_period_days, 7);
+  assert.deepEqual(checkoutParams({ ...planById("crossfit-coaching"), stripePrice: "price_123" }, { userId: "u1", email: "a", origin: "o" }).line_items[0], { price: "price_123", quantity: 1 });
+  assert.equal(checkoutParams({ ...planById("crossfit-coaching"), trialDays: 7 }, { userId: "u1", email: "a", origin: "o" }).subscription_data.trial_period_days, 7);
 });
 
 test("reads the subscription from old and new Stripe API shapes", () => {
-  const a = syncArgs({ id: "sub_1", status: "active", customer: "cus_1", metadata: { user_id: "u1", plan: "coaching" }, current_period_end: 1_800_000_000 });
-  assert.deepEqual(a, { p_user: "u1", p_email: "", p_plan: "coaching", p_status: "active", p_customer: "cus_1", p_subscription: "sub_1", p_period_end: new Date(1_800_000_000_000).toISOString() });
+  const a = syncArgs({ id: "sub_1", status: "active", customer: "cus_1", metadata: { user_id: "u1", plan: "transformation-coaching" }, current_period_end: 1_800_000_000 });
+  assert.deepEqual(a, { p_user: "u1", p_email: "", p_plan: "transformation-coaching", p_status: "active", p_customer: "cus_1", p_subscription: "sub_1", p_period_end: new Date(1_800_000_000_000).toISOString(), p_stream: "transformation", p_join: "week1" });
   const b = syncArgs({ id: "sub_2", status: "past_due", customer: { id: "cus_2" }, metadata: {}, items: { data: [{ current_period_end: 1_800_000_000 }] } }, "u2", "ben@x");
-  assert.equal(b.p_user, "u2"); assert.equal(b.p_customer, "cus_2"); assert.equal(b.p_email, "ben@x"); assert.ok(b.p_period_end);
+  assert.equal(b.p_user, "u2"); assert.equal(b.p_stream, ""); assert.equal(b.p_join, "rolling"); assert.equal(b.p_customer, "cus_2"); assert.equal(b.p_email, "ben@x"); assert.ok(b.p_period_end);
   assert.equal(syncArgs({ id: "sub_3", status: "active", customer: "c" }).p_user, undefined);
 });
 
@@ -59,4 +59,11 @@ test("every plan is something Stripe will accept", () => {
     assert.ok(Array.isArray(p.features) && p.features.length, p.id);
     for (const s of [p.name, p.blurb, ...p.features]) assert.doesNotMatch(s, /[–—]/, "no long dashes");
   }
+});
+
+test("Hyrox is coming soon, so nothing in it can be bought yet; enquire-only plans can't either", () => {
+  assert.equal(payable(planById("affiliate-gym")), false);
+  assert.equal(payable({ id: "x", stream: "hyrox", price: 30, interval: "week" }), false);
+  assert.equal(payable(planById("crossfit-programming")), true);
+  for (const s of STREAMS) assert.ok(["rolling", "week1"].includes(s.join), s.id);
 });

@@ -188,13 +188,18 @@ input.t:focus { border-color: var(--muted); outline: none; }
 .stream-head p { color: var(--paper-muted); }
 .plan .price b { text-transform: uppercase; }
 
-/* focus picker in the sign-up sheet */
-.focus { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
-.focus legend { font-size: 14px; font-weight: 600; color: var(--muted); padding: 0; margin-bottom: 8px; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chips .chip { position: relative; cursor: pointer; }
-.chips .chip input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
-.chips .chip span { display: inline-block; border: 1px solid var(--rule); border-radius: 999px; padding: 7px 14px; font-size: 14px; font-weight: 600; color: var(--muted); }
-.chips .chip input:checked + span { background: var(--fg); color: var(--bg); border-color: var(--fg); }
-.chips .chip input:focus-visible + span { outline: 2px solid var(--fg); outline-offset: 2px; }
 .plans:has(> .plan:only-child) { max-width: 560px; }
+.path { position: relative; align-content: start; }
+.path strong { font-size: 19px; }
+.soon { display: inline-block; font: 700 10px/1 var(--body); letter-spacing: .2em; text-transform: uppercase; border: 1px solid currentColor; border-radius: 999px; padding: 4px 8px; vertical-align: middle; opacity: .7; justify-self: start; }
+.stream-head .small { color: var(--paper-muted); font-size: 15px; }
+.soon-card { background: #fff; border: 1px dashed var(--paper-rule); border-radius: 20px; padding: 26px 28px; display: grid; gap: 16px; justify-items: start; max-width: 560px; color: var(--paper-muted); }
+.soon-card .btn.primary { background: var(--paper-ink); color: var(--paper); border-color: var(--paper-ink); }
+
+/* Body Transformation before/after */
+.results { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px; }
+.result { margin: 0; background: var(--bg); border: 1px solid var(--rule); border-radius: 18px; overflow: hidden; }
+.result .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: var(--rule); }
+.result img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; display: block; }
+.result figcaption { padding: 14px 16px; display: grid; gap: 6px; font-size: 15px; color: var(--muted); }
+.result figcaption strong { color: var(--fg); }

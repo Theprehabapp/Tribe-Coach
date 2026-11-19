@@ -1,40 +1,60 @@
-// The public /join page: plan cards from src/plans.js, a sign-up sheet, then Stripe checkout.
+// The public /join page: streams and plans from src/plans.js, a sign-up sheet, then Stripe checkout.
 // Flow: pick a plan -> name, email, password (a normal Tribe account) -> Stripe -> back here with ?paid=1.
-// Stripe tells worker/stripe.js, which records the plan and approves the account, so there's nothing for the coach to do.
+// Stripe tells worker/stripe.js, which records the plan, approves the account and puts the athlete in their
+// stream's team, so there's nothing for the coach to do.
 import * as api from "./api.js";
-import { PLANS, STREAMS, FOCUS, COACH_EMAIL, planById, payable } from "./plans.js";
+import { PLANS, STREAMS, COACH_EMAIL, planById, payable, planLabel } from "./plans.js";
 
 // Real quotes only, with permission. Leave empty and the block stays hidden.
 // { quote: "...", name: "First name L.", detail: "Coaching, 8 months" }
 const TESTIMONIALS = [];
+// Body Transformation before/after, only with the athlete's written permission. Photos go in public/landing/results/.
+// { name: "Sam", age: 34, before: "/landing/results/sam-before.jpg", after: "/landing/results/sam-after.jpg", result: "+4 kg", quote: "..." }
+const RESULTS = [];
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const per = { week: "week", month: "month", year: "year" };
 let session = null, chosen = null;
 
-// A plan without a price is "apply first": the button opens an email to the coach instead of Stripe.
-const applyLink = (p) => `mailto:${COACH_EMAIL}?subject=${encodeURIComponent(`Tribe ${p.name} application`)}&body=${encodeURIComponent("Name:\nCrossFit or Hyrox (or both):\nNext competition and date:\nBest recent results:\nInstagram:\n")}`;
+const mail = (subject, body) => `mailto:${COACH_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+// A plan without a price is "enquire": the button opens an email to the coach instead of Stripe.
+const enquireLink = (p) => mail(`Tribe ${planLabel(p)} enquiry`, "Gym name:\nWhere you are:\nRoughly how many members:\nWhat you program now:\n");
+const waitlistLink = (st) => mail(`${st.name} - put me on the list`, "Name:\nNext race (if booked):\n");
+
 function planCard(p) {
   const pay = payable(p);
   return `<article class="plan${p.featured ? " featured" : ""}">
-      ${p.featured ? `<span class="badge">${pay ? "Most support" : "Limited spots"}</span>` : ""}
+      ${p.featured ? '<span class="badge">Most support</span>' : ""}
       <h3>${esc(p.name)}</h3>
       <p class="tagline">${esc(p.blurb)}</p>
-      <div class="price">${pay ? `<b>$${p.price}</b><span>AUD / ${per[p.interval] || p.interval}</span>` : "<b>Apply</b><span>by application</span>"}</div>
+      <div class="price">${pay ? `<b>$${p.price}</b><span>AUD / ${per[p.interval] || p.interval}</span>` : "<b>Enquire</b><span>priced per gym</span>"}</div>
       <ul>${p.features.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>
-      <div class="stack-sm">${pay ? `<button class="btn primary" data-plan="${esc(p.id)}">Choose ${esc(p.name)}</button>` : `<a class="btn primary" href="${applyLink(p)}">Apply for ${esc(p.name)}</a>`}
-      <p class="trial">${!pay ? "Tell me about your season and I'll get back to you within 24 hours" : p.trialDays ? `${p.trialDays} days free, then $${p.price} a ${per[p.interval]}` : "Cancel any time"}</p></div>
+      <div class="stack-sm">${pay ? `<button class="btn primary" data-plan="${esc(p.id)}">Choose ${esc(p.name)}</button>` : `<a class="btn primary" href="${enquireLink(p)}">Enquire</a>`}
+      <p class="trial">${!pay ? "Tell me about your gym and I'll send you the details" : p.trialDays ? `${p.trialDays} days free, then $${p.price} a ${per[p.interval]}` : "Cancel any time"}</p></div>
     </article>`;
 }
+
 function renderPlans() {
-  $("plan-list").innerHTML = STREAMS.map((st, i) => {
+  $("paths").innerHTML = STREAMS.map((st) => `<a href="#plans-${st.id}" class="path"><strong>${esc(st.name)}</strong>
+      <span class="small">${esc(st.blurb)}</span>${st.comingSoon ? '<span class="soon">Coming soon</span>' : ""}</a>`).join("");
+  $("plan-list").innerHTML = STREAMS.map((st) => {
     const plans = PLANS.filter((p) => p.stream === st.id);
-    return plans.length ? `<div class="stream" id="plans-${st.id}"><div class="stream-head"><span class="kicker">Stream 0${i + 1}</span><h3>${esc(st.name)}</h3><p>${esc(st.blurb)}</p></div>
-      <div class="plans">${plans.map(planCard).join("")}</div></div>` : "";
+    const body = st.comingSoon
+      ? `<div class="soon-card"><p>${esc(st.detail)}</p><a class="btn primary" href="${waitlistLink(st)}">Join the list</a></div>`
+      : `<div class="plans">${plans.map(planCard).join("")}</div>`;
+    return `<div class="stream" id="plans-${st.id}"><div class="stream-head"><h3>${esc(st.name)}${st.comingSoon ? ' <span class="soon">Coming soon</span>' : ""}</h3>
+      <p>${esc(st.blurb)}</p>${st.comingSoon ? "" : `<p class="small">${esc(st.detail)}</p>`}</div>${body}</div>`;
   }).join("");
   const from = Math.min(...PLANS.filter(payable).map((p) => p.price));
   document.querySelectorAll("[data-from-price]").forEach((el) => (el.textContent = `$${from}`));
+}
+
+function renderResults() {
+  if (!RESULTS.length) return;
+  $("result-list").innerHTML = RESULTS.map((r) => `<figure class="result"><div class="pair"><img src="${esc(r.before)}" alt="${esc(r.name)} before" loading="lazy"><img src="${esc(r.after)}" alt="${esc(r.name)} after 12 weeks" loading="lazy"></div>
+      <figcaption><strong>${esc(r.name)}${r.age ? `, ${esc(r.age)}` : ""}</strong>${r.result ? ` - ${esc(r.result)}` : ""}${r.quote ? `<p>${esc(r.quote)}</p>` : ""}</figcaption></figure>`).join("");
+  $("results").hidden = false;
 }
 
 function renderQuotes() {
@@ -60,7 +80,7 @@ function renderNotice() {
 function openSheet(planId) {
   chosen = planById(planId);
   if (!payable(chosen)) return;
-  $("su-plan").textContent = `${chosen.name} - $${chosen.price} AUD a ${per[chosen.interval]}`;
+  $("su-plan").textContent = `${planLabel(chosen)} - $${chosen.price} AUD a ${per[chosen.interval]}`;
   $("su-msg").textContent = "";
   const signedIn = !!session;
   $("su-fields").hidden = signedIn;
@@ -69,8 +89,6 @@ function openSheet(planId) {
   $("su-lead").innerHTML = signedIn
     ? `<span class="signed-in">Signed in as <strong>${esc(session.user.email)}</strong></span>`
     : "This is the email and password you'll use to log in to the app. Next, you'll pay on Stripe's secure page.";
-  // What they're training for; tick as many as fit. Saved as their goal so the coach knows which program to give.
-  $("su-focus-list").innerHTML = FOCUS.map((f) => `<label class="chip"><input type="checkbox" value="${esc(f)}"><span>${esc(f)}</span></label>`).join("");
   $("su-go").disabled = false;
   $("signup").showModal();
   if (!signedIn) $("su-name").focus();
@@ -95,8 +113,7 @@ async function submit(ev) {
       await api.signUp(email, $("su-pass").value, $("su-name").value.trim());
     }
     msg.textContent = "Opening secure payment...";
-    const focus = [...document.querySelectorAll("#su-focus-list input:checked")].map((i) => i.value);
-    location.href = await api.startCheckout(chosen.id, email, focus);
+    location.href = await api.startCheckout(chosen.id, email);
   } catch (e) {
     msg.textContent = MESSAGES[e.code] || (/registered/i.test(e.message) ? MESSAGES.existing_account : e.message);
     btn.disabled = false;
@@ -106,6 +123,7 @@ async function submit(ev) {
 async function init() {
   renderPlans();
   renderQuotes();
+  renderResults();
   if (api.configured) { try { session = await api.getSession(); } catch { session = null; } }
   renderNotice();
   document.addEventListener("click", (ev) => {
@@ -114,7 +132,7 @@ async function init() {
     if (ev.target.closest("[data-close]")) $("signup").close();
   });
   $("su-form").addEventListener("submit", submit);
-  // Arrived from an Instagram link like /join?plan=coaching: open that plan straight away.
+  // Arrived from an Instagram link like /join?plan=transformation-coaching: open that plan straight away.
   const want = new URLSearchParams(location.search).get("plan");
   if (want && payable(planById(want))) { document.getElementById("plans").scrollIntoView(); openSheet(want); }
 }

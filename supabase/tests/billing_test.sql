@@ -64,3 +64,35 @@ set request.jwt.uid = '00000000-0000-0000-0000-00000000000c';
 update profiles set approved = false where id = '00000000-0000-0000-0000-0000000000b2';
 reset role;
 select approved from profiles where email = 'ben@x';
+
+-- ---------- streams ----------
+insert into programs (id, name, weeks) values ('00000000-0000-0000-0000-0000000000e1', 'Road to Torian', '[{"days":[]}]'), ('00000000-0000-0000-0000-0000000000e2', 'Muscle Building', '[{"days":[{"id":"d1"}]},{"days":[]}]');
+insert into teams (id, name, program_id, start_date, stream) values
+  ('00000000-0000-0000-0000-0000000000f1', 'CrossFit Tribe', '00000000-0000-0000-0000-0000000000e1', '2026-09-21', 'crossfit'),
+  ('00000000-0000-0000-0000-0000000000f2', 'Body Transformation', '00000000-0000-0000-0000-0000000000e2', '2026-08-03', 'transformation');
+\echo '--- Only one team per stream (expect error)'
+insert into teams (name, stream) values ('Second CrossFit', 'crossfit');
+insert into auth.users values ('00000000-0000-0000-0000-0000000000c3','cat@x','{"name":"Cat"}');
+insert into auth.users values ('00000000-0000-0000-0000-0000000000d4','dan@x','{"name":"Dan"}');
+insert into auth.users values ('00000000-0000-0000-0000-0000000000e5','eve@x','{"name":"Eve"}');
+
+\echo '--- Cat pays for CrossFit (rolling): joins the team, no own program (expect t | t | t)'
+select billing_sync('00000000-0000-0000-0000-0000000000c3', '', 'crossfit-programming', 'active', 'cus_c', 'sub_c', null, 'crossfit', 'rolling');
+select approved, team_id = '00000000-0000-0000-0000-0000000000f1', program_id is null from profiles where email = 'cat@x';
+
+\echo '--- Dan pays for Body Transformation (week1): team + own copy from this Monday, sent twice = still one copy (expect t | t | Muscle Building (Dan) | 2 | t, then 1)'
+select billing_sync('00000000-0000-0000-0000-0000000000d4', '', 'transformation-coaching', 'active', 'cus_d', 'sub_d', null, 'transformation', 'week1');
+select billing_sync('00000000-0000-0000-0000-0000000000d4', '', 'transformation-coaching', 'active', 'cus_d', 'sub_d', null, 'transformation', 'week1');
+select p.approved, p.team_id = '00000000-0000-0000-0000-0000000000f2', g.name, jsonb_array_length(g.weeks), extract(isodow from p.start_date) = 1
+  from profiles p join programs g on g.id = p.program_id where p.email = 'dan@x';
+select count(*) from programs where owner_id = '00000000-0000-0000-0000-0000000000d4';
+
+\echo '--- Eve already has a team from the coach: paying approves her but does not move her (expect t | t)'
+update profiles set team_id = '00000000-0000-0000-0000-0000000000f1' where email = 'eve@x';
+select billing_sync('00000000-0000-0000-0000-0000000000e5', '', 'transformation-programming', 'active', 'cus_e', 'sub_e', null, 'transformation', 'week1');
+select approved, team_id = '00000000-0000-0000-0000-0000000000f1' from profiles where email = 'eve@x';
+
+\echo '--- A stream with no team linked: approved, no team (expect t | t)'
+insert into auth.users values ('00000000-0000-0000-0000-0000000000a6','fay@x','{"name":"Fay"}');
+select billing_sync('00000000-0000-0000-0000-0000000000a6', '', 'affiliate-individual', 'active', 'cus_f', 'sub_f', null, 'affiliate', 'rolling');
+select approved, team_id is null from profiles where email = 'fay@x';

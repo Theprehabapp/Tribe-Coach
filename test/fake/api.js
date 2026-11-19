@@ -6,7 +6,7 @@ const role = new URLSearchParams(location.search).get("as") || "coach";
 const coach = { id: "c", email: "coach@x", name: "Coach", role: "coach", approved: true, goal: "" };
 const amy = { id: "a", email: "amy@x", name: "Amy", role: "client", approved: true, goal: "", program_id: null, start_date: "2026-09-28" };
 const ben = { id: "b", email: "ben@x", name: "Ben", role: "client", approved: false, goal: "" };
-const db = { subs: [{ user_id: "a", email: "amy@x", plan: "coaching", status: "active", stripe_customer: "cus_x" }], profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [], prs: [], prHistory: [], checkins: [], invites: [], calls: [], libItems: [] };
+const db = { subs: [{ user_id: "a", email: "amy@x", plan: "crossfit-coaching", status: "active", stripe_customer: "cus_x" }], profiles: [coach, amy, ben], programs: [], logs: [], videos: [], messages: [], exercises: [], maxes: [], teams: [{ id: "t1", name: "CrossFit Tribe", program_id: null, start_date: null, leaderboard: true, stream: "crossfit" }, { id: "t2", name: "Muscle Building", program_id: null, start_date: null, leaderboard: true, stream: null }], prs: [], prHistory: [], checkins: [], invites: [], calls: [], libItems: [] };
 // ?lib=1: a small library like Alessio's TrainHeroic one (tags, a video, a circuit, a template, a prescription).
 if (new URLSearchParams(location.search).get("lib")) {
   const ex = (name, extra = {}) => ({ id: "x-" + name.replace(/\W+/g, ""), name, demo_url: "", demo_path: null, cues: "", param1: "Reps", param2: "Weight (kg)", tags: [], swaps: [], ref_max: "", track_as: "", created_by: "Alessio Angelucci", ...extra });

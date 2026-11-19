@@ -4,7 +4,7 @@
 //   POST /api/billing-portal  a signed-in athlete gets Stripe's page to cancel, change card or see receipts
 // Secrets (Cloudflare > Workers > tribe-coach > Settings > Variables and Secrets): STRIPE_SECRET_KEY,
 // STRIPE_WEBHOOK_SECRET, SUPABASE_SERVICE_ROLE_KEY. SUPABASE_URL is a plain var in wrangler.jsonc.
-import { CURRENCY, FOCUS, planById, payable } from "../src/plans.js";
+import { CURRENCY, planById, streamById, payable, planLabel } from "../src/plans.js";
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const fail = (status, code, error) => json({ code, error }, status);
@@ -65,7 +65,7 @@ export function checkoutParams(plan, { userId, email, origin }) {
     mode: "subscription",
     line_items: [plan.stripePrice ? { price: plan.stripePrice, quantity: 1 } : {
       quantity: 1,
-      price_data: { currency: CURRENCY, unit_amount: Math.round(plan.price * 100), recurring: { interval: plan.interval }, product_data: { name: `Tribe ${plan.name}` } },
+      price_data: { currency: CURRENCY, unit_amount: Math.round(plan.price * 100), recurring: { interval: plan.interval }, product_data: { name: planLabel(plan) } },
     }],
     customer_email: email,
     client_reference_id: userId,
@@ -93,17 +93,16 @@ async function checkout(req, env) {
   if (sub && PAID.includes(sub.status)) return fail(409, "already_paid", "That account already has an active plan.");
   // Without a session, an approved account must sign in first, so nobody can start a plan on someone else's account.
   if (!user && profile.approved) return fail(409, "existing_account", "There's already an account with that email.");
-  // What they're training for, picked on /join, becomes their goal unless they've already written one.
-  const focus = (Array.isArray(body.focus) ? body.focus : []).filter((f) => FOCUS.includes(f));
-  if (focus.length) await db(env, `profiles?id=eq.${profile.id}&goal=eq.`, { method: "PATCH", body: JSON.stringify({ goal: focus.join(", ") }) });
   const origin = new URL(req.url).origin;
   const s = await stripe(env, "POST", "checkout/sessions", checkoutParams(plan, { userId: profile.id, email: profile.email || email, origin }));
   return json({ url: s.url });
 }
 
 // The subscription as one row for public.billing_sync().
+// The plan's stream decides which team they join and how (see src/plans.js).
 export function syncArgs(sub, fallbackUser, fallbackEmail) {
   const end = sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end;
+  const stream = streamById(planById(sub.metadata?.plan)?.stream);
   return {
     p_user: sub.metadata?.user_id || fallbackUser,
     p_email: fallbackEmail || "",
@@ -112,6 +111,8 @@ export function syncArgs(sub, fallbackUser, fallbackEmail) {
     p_customer: typeof sub.customer === "string" ? sub.customer : sub.customer?.id,
     p_subscription: sub.id,
     p_period_end: end ? new Date(end * 1000).toISOString() : null,
+    p_stream: stream?.id || "",
+    p_join: stream?.join || "rolling",
   };
 }
 

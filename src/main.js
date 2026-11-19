@@ -8,7 +8,7 @@ import { liftSets, series, records, newPRs } from "./progress.js";
 import { PR_LIFTS, PR_SETS, KINDS, validScore, scoreKind, prTarget, beats } from "./scores.js";
 import { openTimer, closeTimer, presetFor, restSecs } from "./timer.js";
 import { PARAMS, STOCK_TAGS, RX_CATEGORIES, CIRCUIT_RESULTS, metricOf, paramOf, resultTag, resultLabel, filterRows, sortRows, pageOf, tagCounts, rxTitle, applyRx, cleanSwaps, cleanTags } from "./library.js";
-import { PLANS } from "./plans.js";
+import { planById, planLabel, STREAMS as SIGNUP_STREAMS } from "./plans.js";
 import { DEFAULT_CALLS, slotsFor, callMonth, nextMonth, googleLink, icsFile } from "./calls.js";
 import {
   FEEDBACK_HOURS, DOW_LONG, W1_LINE, ymd, fmtDay, fmtLong, fmtTime,
@@ -300,12 +300,13 @@ function lockup() {
   return `<div class="lockup"><div class="logo" role="img" aria-label="TRIBE.HQ"></div><div class="tag">Functional Strength &amp; Conditioning</div></div>`;
 }
 // Paid plan from /join (migration 0021), if any.
+const streamOf = (t) => SIGNUP_STREAMS.find((x) => x.id === t?.stream) || null;
 const subOf = (id) => (D.subs || []).find((x) => x.user_id === id) || null;
 const SUB_BAD = { past_due: "Payment failed", unpaid: "Unpaid", canceled: "Cancelled", incomplete: "Not paid", incomplete_expired: "Not paid", paused: "Paused" };
 function subChip(c) {
   const x = subOf(c.id);
   if (!x) return "";
-  const name = PLANS.find((p) => p.id === x.plan)?.name || x.plan || "Plan";
+  const name = planLabel(planById(x.plan)) || x.plan || "Plan";
   return SUB_BAD[x.status] ? ` <span class="chip red">${esc(name)}: ${SUB_BAD[x.status]}</span>` : ` <span class="chip">${esc(name)}</span>`;
 }
 function footer() {
@@ -1080,7 +1081,10 @@ function vTeam() {
     <div class="grid2"><label class="f">Program<select class="t" id="t-prog" data-change="t-prog"><option value="">None</option>${libraryPrograms().map((p) => `<option value="${p.id}"${t.program_id === p.id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
     <label class="f">Start date<input class="t" type="date" id="t-start" data-change="t-start" value="${esc(t.start_date || "")}"></label></div>
     <p class="muted small">Everyone in the team trains this program from this date, unless they have their own program.</p>
-    ${D.socialReady ? `<label class="row small"><input type="checkbox" data-change="t-board"${t.leaderboard !== false ? " checked" : ""}> Show the team leaderboard to its athletes</label>` : ""}</section>
+    ${D.socialReady ? `<label class="row small"><input type="checkbox" data-change="t-board"${t.leaderboard !== false ? " checked" : ""}> Show the team leaderboard to its athletes</label>` : ""}
+    ${"stream" in t ? `<label class="f">Website sign-ups join this team<select class="t" data-change="t-stream"><option value="">No stream</option>${SIGNUP_STREAMS.map((x) => { const other = D.teams.find((o) => o.stream === x.id && o.id !== t.id);
+      return `<option value="${x.id}"${t.stream === x.id ? " selected" : ""}>${esc(x.name)}${x.join === "week1" ? " (own copy from week 1)" : ""}${other ? ` - now ${esc(other.name)}` : ""}</option>`; }).join("")}</select></label>
+    <p class="muted small">${t.stream ? (streamOf(t)?.join === "week1" ? "Someone who pays for this stream joins this team and gets their own copy of its program, starting at week 1 this Monday." : "Someone who pays for this stream joins this team and trains the live week with everyone.") : "Pick a stream and people who pay for it on the sign-up page land here automatically."}</p>` : ""}</section>
     ${calBox({ p: program(t.program_id), start: t.start_date }, teamFollowers(t), t.id, "", true)}
     ${teamCopies(t)}
     ${boardBox(t, true)}
@@ -2474,6 +2478,16 @@ document.addEventListener("change", async (ev) => {
     return;
   }
   if (a === "board-ex") { ui.boardEx = { ...ui.boardEx, [t.dataset.tid]: t.value }; document.querySelector(`[data-board="${t.dataset.tid}"]`).innerHTML = boardBody(t.dataset.tid); return; }
+  if (a === "t-stream") {
+    // Only one team per stream: taking a stream moves it off the team that had it.
+    const v = t.value || null, prev = D.teams.find((o) => o.stream === v && o.id !== ui.teamId);
+    try {
+      if (v && prev) { const r = await api.saveTeam(prev.id, { stream: null }); D.teams = D.teams.map((x) => (x.id === r.id ? r : x)); }
+      const row = await api.saveTeam(ui.teamId, { stream: v }); D.teams = D.teams.map((x) => (x.id === row.id ? row : x));
+      render(); toast(v ? `${streamOf(row).name} sign-ups now join ${row.name}.${prev ? ` ${prev.name} no longer takes them.` : ""}` : "This team no longer takes website sign-ups.");
+    } catch (err) { fail(err, "Team"); render(); }
+    return;
+  }
   if (a === "t-board") {
     try { const row = await api.saveTeam(ui.teamId, { leaderboard: t.checked }); D.teams = D.teams.map((x) => (x.id === row.id ? row : x)); toast(t.checked ? "Athletes in this team can see the leaderboard." : "Leaderboard hidden from athletes."); }
     catch (err) { fail(err, "Team"); t.checked = !t.checked; }
