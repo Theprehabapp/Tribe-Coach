@@ -1,13 +1,16 @@
-// Serves the app (static files in dist/) and one endpoint: /api/push, which the database calls to
+// Serves the app (static files in dist/), the Stripe endpoints in stripe.js, and /api/push, which the database calls to
 // deliver a phone notification. The database sends the subscription, the message and the VAPID keys;
 // nothing is stored here. Only real browser push services are accepted as destinations.
 import { sendPush } from "./push.js";
+import { handleStripe } from "./stripe.js";
 
 const PUSH_HOSTS = [/(^|\.)fcm\.googleapis\.com$/, /(^|\.)push\.apple\.com$/, /(^|\.)push\.services\.mozilla\.com$/, /(^|\.)notify\.windows\.com$/];
 
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
+    const paid = await handleStripe(req, env);
+    if (paid) return paid;
     if (url.pathname !== "/api/push") return env.ASSETS.fetch(req);
     if (req.method !== "POST") return new Response("POST only", { status: 405 });
     let job;

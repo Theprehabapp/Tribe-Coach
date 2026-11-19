@@ -138,3 +138,16 @@ Video files are the only thing that grows. The coach view has a **Clear video fi
 npm test                       # review-day and program maths, push encryption
 npx vite build --mode fake     # UI build against an in-memory backend, for offline smoke tests
 ```
+
+## Sign-up page and payments (Stripe)
+
+`/join` is a public page for new athletes: plans, a sign-up sheet, then Stripe Checkout. Paying approves the account, so they skip **Waiting for approval**. The streams (CrossFit Tribe, Body Transformation, Hyrox, Tribe Affiliate), plans and prices live in `src/plans.js` (the page and the worker both read it, so the price charged always matches the page). A plan with `price: null` shows an Enquire button that emails the coach; a stream marked `comingSoon` shows a Join the list button. On each team page, **Website sign-ups join this team** links a stream to that team: a paying athlete joins it automatically, and for a `week1` stream (Body Transformation) also gets their own copy of the program from week 1, this Monday. Link a plan straight from Instagram with `/join?plan=transformation-coaching`.
+
+1. Run `supabase/migrations/0021_billing.sql` in the SQL Editor.
+2. In Stripe, **Developers > API keys**: copy the **Secret key** (`sk_live_...`, or `sk_test_...` to try it first).
+3. In Stripe, **Developers > Webhooks > Add endpoint**: URL `https://<your site>/api/stripe-webhook`, events `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`. Copy its **Signing secret** (`whsec_...`).
+4. In Supabase, **Project Settings > API**: copy the **service_role** key. It goes only into Cloudflare, never into this repo or the browser.
+5. In Cloudflare, **Workers & Pages > tribe-coach > Settings > Variables and Secrets**, add three secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`.
+6. In Stripe, **Settings > Billing > Customer portal**: turn on cancelling and updating payment methods, and save. This is the page athletes reach from **Manage billing** at the bottom of the app.
+
+Until the secrets are in, the page shows the plans and tells people sign-ups open soon. A cancelled or failed payment shows as a red chip next to the athlete in **Clients**; it doesn't remove access by itself.

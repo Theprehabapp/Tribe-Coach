@@ -1,9 +1,11 @@
 // Cloudflare deploy config: serves the built app in dist/ as static files, plus worker/index.js for
-// /api/push (phone notifications). Build command: npm run build. Deploy command: npx wrangler deploy.
+// /api/push (phone notifications) and /api/checkout, /api/stripe-webhook, /api/billing-portal (payments). Build command: npm run build. Deploy command: npx wrangler deploy.
 {
   "name": "tribe-coach",
   "compatibility_date": "2026-09-01",
   "main": "worker/index.js",
+  // Public. The Stripe and Supabase service keys are secrets, set in the Cloudflare dashboard, never here.
+  "vars": { "SUPABASE_URL": "https://cltwdoszplvyfnrdisfz.supabase.co" },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
