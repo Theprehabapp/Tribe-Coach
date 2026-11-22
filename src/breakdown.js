@@ -221,7 +221,8 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
     const lead = targets()[0], d = lead.duration || 0;
     if (!scrubbing && d) scrub.value = Math.round((lead.currentTime / d) * 1000);
     timeEl.textContent = `${fmt(lead.currentTime || 0)} / ${fmt(d)}${st.rec ? `  ·  REC ${fmt((performance.now() - st.recStart) / 1000)}` : ""}`;
-    if (st.rec && (performance.now() - st.recStart) / 1000 >= maxSeconds) stopRec();
+    // Stop at the time limit, or just before the file would be too big to save.
+    if (st.rec && ((performance.now() - st.recStart) / 1000 >= maxSeconds || recBytes() >= maxBytes * 0.95)) stopRec();
   }
   // Scrubbing follows the first target; any other target moves by the same amount so lined-up reps stay lined up.
   // fastSeek jumps to the nearest key frame, which keeps dragging smooth on iPhone; letting go lands on the exact frame.
@@ -299,6 +300,7 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
     st.recStart = performance.now();
     recUI();
   }
+  function recBytes() { return (st.chunks || []).reduce((n, c) => n + c.size, 0); }
   function stopRec() { if (st.rec && st.rec.state !== "inactive") st.rec.stop(); }
   function stopMic() { st.mic?.getTracks().forEach((t) => t.stop()); st.mic = null; }
   function dropResult() { if (st.resultUrl) URL.revokeObjectURL(st.resultUrl); st.result = st.resultUrl = null; }

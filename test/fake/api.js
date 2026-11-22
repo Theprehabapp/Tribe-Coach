@@ -2,6 +2,7 @@
 import { exampleProgram } from "../../src/example.js";
 export const configured = true;
 export const MAX_VIDEO_MB = 200;
+export const MAX_REVIEW_MIN = 10;
 const role = new URLSearchParams(location.search).get("as") || "coach";
 const coach = { id: "c", email: "coach@x", name: "Coach", role: "coach", approved: true, goal: "" };
 const amy = { id: "a", email: "amy@x", name: "Amy", role: "client", approved: true, goal: "", program_id: null, start_date: "2026-09-28" };
