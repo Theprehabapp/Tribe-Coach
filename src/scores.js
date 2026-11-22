@@ -74,3 +74,24 @@ export function beats(kind, a, b) {
   if (y == null) return true;
   return kind === "time" ? x < y : x > y;
 }
+
+// Team workout leaderboard: scores grouped by workout and day, newest first, each ranked best first.
+// rows: [{ client_id, athlete, workout, score, result, day }]. A score that can't be read (or a block scored
+// "for completion") is listed after the ranked ones, without a place.
+export function rankScores(rows, custom = []) {
+  const groups = new Map();
+  for (const r of rows) {
+    const k = `${r.day}|${exKey(r.workout)}`;
+    if (!groups.has(k)) groups.set(k, { key: k, workout: r.workout, day: r.day, score: r.score, kind: scoreKind({ name: r.workout, score: r.score }, custom) || "score", rows: [] });
+    groups.get(k).rows.push(r);
+  }
+  const out = [...groups.values()].map((g) => {
+    const val = (r) => (g.kind === "score" ? null : scoreValue(g.kind, r.result));
+    const ranked = g.rows.filter((r) => val(r) != null).sort((a, b) => (g.kind === "time" ? val(a) - val(b) : val(b) - val(a)));
+    let place = 0;
+    ranked.forEach((r, i) => { place = i && val(r) === val(ranked[i - 1]) ? place : i + 1; r.place = place; });
+    const rest = g.rows.filter((r) => val(r) == null).map((r) => ({ ...r, place: null }));
+    return { ...g, rows: [...ranked, ...rest] };
+  });
+  return out.sort((a, b) => String(b.day).localeCompare(String(a.day)) || a.workout.localeCompare(b.workout));
+}

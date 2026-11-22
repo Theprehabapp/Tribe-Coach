@@ -131,6 +131,15 @@ export const teamBoard = async (team) => {
   window.__board = team; return [...mates, ...Object.values(amyBest)];
 };
 
+// Same shape as team_scores(): every scored block of the team. ?noscores=1 acts like 0020 isn't run yet.
+export const teamScores = async (team) => {
+  if (new URLSearchParams(location.search).get("noscores")) throw new Error("Could not find the function public.team_scores(team) in the schema cache");
+  window.__scores = team;
+  return [{ client_id: "m1", athlete: "Jack", workout: "Fran", score: "(FOR TIME)", result: "3:12", day: "2026-11-04" }, { client_id: "m2", athlete: "Issy", workout: "Fran", score: "(FOR TIME)", result: "2:58", day: "2026-11-04" },
+    { client_id: "a", athlete: "Amy", workout: "Fran", score: "(FOR TIME)", result: "4:05", day: "2026-11-04" }, { client_id: "m3", athlete: "Tom", workout: "Fran", score: "(FOR TIME)", result: "3:12", day: "2026-11-04" },
+    { client_id: "m1", athlete: "Jack", workout: "12 Minute AMRAP", score: "(FOR ROUNDS + REPS)", result: "6+4", day: "2026-11-06" }, { client_id: "a", athlete: "Amy", workout: "12 Minute AMRAP", score: "(FOR ROUNDS + REPS)", result: "7+1", day: "2026-11-06" },
+    { client_id: "m2", athlete: "Issy", workout: "Row Erg", score: "(FOR CALORIES)", result: "42", day: "2026-11-02" }];
+};
 export const bookCall = async (client_id, starts_at) => { if (db.calls.some((c) => c.starts_at === starts_at)) throw new Error("taken");
   const { monthOf } = await import("../../src/calls.js"); const row = { id: "k" + Date.now(), client_id, starts_at, month: monthOf(starts_at, callCfg) }; db.calls.push(row); return structuredClone(row); };
 export const cancelCall = async (id) => { db.calls = db.calls.filter((c) => c.id !== id); };
