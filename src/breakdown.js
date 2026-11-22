@@ -341,7 +341,13 @@ export function mountBreakdown(root, { src, label = "", maxSeconds = 180, maxByt
         b.disabled = true; m.textContent = "Saving...";
         const name = recEl.querySelector("[data-bd-label]")?.value.trim() || nextLabel();
         try { await onSave(st.result, name); dropResult(); st.saved = true; recUI(); }
-        catch (e) { m.textContent = `Didn't save: ${e.message || e}. Check your connection and try again.`; b.disabled = false; }
+        catch (e) {
+          const err = String(e.message || e);
+          m.textContent = /maximum allowed size|too large|413/i.test(err)
+            ? "Didn't save: Supabase's upload size limit is lower than this recording. Raise it in Supabase (Storage settings), then press Save again. The recording is kept."
+            : `Didn't save: ${err}. Check your connection and try again.`;
+          b.disabled = false;
+        }
         break;
       }
     }
