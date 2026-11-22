@@ -8,6 +8,7 @@ export const sb = configured ? createClient(url, key) : null;
 
 const BUCKET = "videos";
 export const MAX_VIDEO_MB = 200;
+export const MAX_REVIEW_MIN = 10; // breakdown recording length; ~12 MB a minute, so well under MAX_VIDEO_MB
 
 function check({ data, error }) {
   if (error) throw error;

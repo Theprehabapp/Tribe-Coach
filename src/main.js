@@ -463,7 +463,7 @@ async function openBreakdown() {
     const cur = () => D.videos.find((x) => x.id === v.id) || v;
     bd = mountBreakdown(root, {
       src, label: fmtFilmed(filmedOf(v)),
-      maxBytes: api.MAX_VIDEO_MB * 1048576,
+      maxSeconds: api.MAX_REVIEW_MIN * 60, maxBytes: api.MAX_VIDEO_MB * 1048576,
       multi, nextLabel: () => (toChat ? v.exercise : `Point ${clipsOf(cur()).length + 1}`),
       onSave: async (blob, label) => {
         if (toChat) {
